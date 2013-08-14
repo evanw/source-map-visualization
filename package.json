@@ -1,0 +1,10 @@
+{
+  "name": "source-map-visualization",
+  "version": "0.1.0",
+  "dependencies": {
+    "jsx": "*",
+    "typescript": "*",
+    "coffee-script": "*",
+    "coffee-script-redux": "*"
+  }
+}

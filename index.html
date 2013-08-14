@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Source Map Visualization</title>
+    <style>
+
+body {
+  font: 14px sans-serif;
+  margin: 50px;
+}
+
+h1 {
+  font-size: 40px;
+}
+
+h2 {
+  margin-top: 50px;
+  font-size: 30px;
+  text-align: center;
+  max-width: 1104px;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+th {
+  font-size: 16px;
+  text-align: left;
+}
+
+td {
+  padding: 10px 10px 0 0;
+  vertical-align: top;
+}
+
+.input {
+  height: 150px;
+}
+
+.input, .output {
+  border: 1px solid #BBB;
+  background: #EEE;
+  padding: 3px;
+  width: 350px;
+  font: 12px/16px monospace;
+  border-radius: 3px;
+}
+
+.output {
+  white-space: pre-wrap;
+  min-height: 150px;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+span {
+  background: #FE7;
+  margin-right: 2px;
+}
+
+span.hover {
+  color: #FFF;
+  background: #000;
+}
+
+    </style>
+  </head>
+  <body>
+    <h1>Source Map Visualization</h1>
+    <div id="exampleList"></div>
+
+    <h2>Input</h2>
+    <table>
+      <tr>
+        <th>Original</th>
+        <th>Generated</th>
+        <th>Source Map</th>
+      </tr>
+      <tr>
+        <td><textarea class="input" id="originalInput"></textarea></td>
+        <td><textarea class="input" id="generatedInput"></textarea></td>
+        <td><textarea class="input" id="mapInput"></textarea></td>
+      </tr>
+    </table>
+
+    <h2>Output</h2>
+    <table>
+      <tr>
+        <th>Original</th>
+        <th>Generated</th>
+        <th>Source Map</th>
+      </tr>
+      <tr>
+        <td><div class="output" id="originalOutput"></div></td>
+        <td><div class="output" id="generatedOutput"></div></td>
+        <td><div class="output" id="mapOutput"></div></td>
+      </tr>
+    </table>
+
+    <script src="source-map.min.js"></script>
+    <script src="examples.js"></script>
+    <script>
+
+function textToHTML(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function wrapWithMappings(text, mappings) {
+  var names = mappings.map(function(m) { return m.originalLine + '_' + m.originalColumn + '_' + m.generatedLine + '_' + m.generatedColumn; });
+  return '<span names="' + names.join(' ') + '">' + textToHTML(text) + '</span>';
+}
+
+function lineSlice(lines, a, b) {
+  // Lines are one-based, columns are zero-based
+  var line1 = a.line - 1;
+  var line2 = b.line - 1;
+  var column1 = a.column;
+  var column2 = b.column;
+
+  // Clamp lines in bounds (the JSX compiler generates wildly out-of-bounds numbers)
+  if (line1 < 0) line1 = column1 = 0;
+  if (line2 < 0) line2 = column2 = 0;
+  if (line1 >= lines.length) { line1 = lines.length - 1; column1 = lines[line1].length; }
+  if (line2 >= lines.length) { line2 = lines.length - 1; column2 = lines[line2].length; }
+
+  if (line1 === line2) {
+    return lines[line1].slice(column1, column2);
+  }
+
+  return Array.prototype.concat.call(Array.prototype,
+    lines[line1].slice(column1),
+    lines.slice(line1 + 1, line2),
+    lines[line2].slice(0, column2)).join('\n');
+}
+
+function insertMappingsIntoHTML(text, order) {
+  if (order.length === 0) {
+    return textToHTML(text);
+  }
+
+  var html = '';
+  var lines = text.split('\n');
+  if (order[0].line !== 1 || order[0].column !== 0) order.unshift({ mapping: null, line: 1, column: 0 });
+  order.push({ mapping: null, line: lines.length, column: lines[lines.length - 1].length - 1 });
+
+  for (var i = 1; i < order.length; i++) {
+    var start = i - 1;
+    var previous = order[start];
+    var next = order[i];
+    while (i + 1 < order.length && next.line === previous.line && next.column === previous.column) {
+      next = order[++i];
+    }
+    var slice = lineSlice(lines, previous, next);
+    html += previous.mapping !== null ? wrapWithMappings(slice, order.slice(start, i).map(function(m) { return m.mapping; })) : textToHTML(slice);
+  }
+
+  return html;
+}
+
+function mappingToDisplayHTML(mapping) {
+  var text = mapping.originalLine + ':' + mapping.originalColumn + ' -> ' + mapping.generatedLine + ':' + mapping.generatedColumn;
+  return wrapWithMappings(text, [mapping]);
+}
+
+function getOriginal(mapping) {
+  return {
+    mapping: mapping,
+    line: mapping.originalLine,
+    column: mapping.originalColumn
+  };
+}
+
+function getGenerated(mapping) {
+  return {
+    mapping: mapping,
+    line: mapping.generatedLine,
+    column: mapping.generatedColumn
+  };
+}
+
+function update() {
+  try {
+    var map = new sourceMap.SourceMapConsumer(mapInput.value);
+  } catch (e) {
+    originalOutput.innerHTML = generatedOutput.innerHTML = '';
+    mapOutput.innerHTML = textToHTML(e + '');
+    return;
+  }
+
+  var originalOrder = [];
+  var generatedOrder = [];
+  map.eachMapping(function(m) { originalOrder.push(m); }, null, sourceMap.SourceMapConsumer.ORIGINAL_ORDER);
+  map.eachMapping(function(m) { generatedOrder.push(m); }, null, sourceMap.SourceMapConsumer.GENERATED_ORDER);
+
+  originalOutput.innerHTML = insertMappingsIntoHTML(originalInput.value, originalOrder.map(getOriginal));
+  generatedOutput.innerHTML = insertMappingsIntoHTML(generatedInput.value, generatedOrder.map(getGenerated));
+  mapOutput.innerHTML = originalOrder.map(mappingToDisplayHTML).join('\n');
+}
+
+function loadExample(example) {
+  originalInput.value = example.original;
+  generatedInput.value = example.generated;
+  mapInput.value = JSON.stringify(example.map);
+  update();
+}
+
+document.onmousemove = function(e) {
+  var names = e.target.tagName === 'SPAN' ? e.target.getAttribute('names').split(' ') : null;
+  Array.prototype.map.call(document.getElementsByTagName('span'), function(span) {
+    span.className = names !== null && span.getAttribute('names').split(' ').some(function(n) { return names.indexOf(n) >= 0; }) ? 'hover' : '';
+  });
+};
+
+originalInput.oninput = update;
+generatedInput.oninput = update;
+mapInput.oninput = update;
+
+exampleList.innerHTML = 'Examples: ' + examples.map(function(example, i) {
+  return '<button onclick="loadExample(examples[' + i + '])">' + textToHTML(example.name) + '</button>';
+}).join(' ');
+loadExample(examples[0]);
+
+    </script>
+  </body>
+</html>
