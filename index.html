@@ -88,7 +88,7 @@ span.hover {
     <h2>Output</h2>
     <table>
       <tr>
-        <th>Original</th>
+        <th>Original: <select id="selectSource"></select></th>
         <th>Generated</th>
         <th>Source Map</th>
       </tr>
@@ -103,12 +103,19 @@ span.hover {
     <script src="examples.js"></script>
     <script>
 
+// The generated mappings for the JSX output contain undefined in some places
+function forceSourceToString(text) {
+  return text + '';
+}
+
 function textToHTML(text) {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function wrapWithMappings(text, mappings) {
-  var names = mappings.map(function(m) { return m.originalLine + '_' + m.originalColumn + '_' + m.generatedLine + '_' + m.generatedColumn; });
+  var names = mappings.filter(function(m) { return m !== null; }).map(function(m) {
+    return m.originalLine + '_' + m.originalColumn + '_' + m.generatedLine + '_' + m.generatedColumn + '_' + forceSourceToString(m.source).replace(/[^\w]/g, '_');
+  });
   return '<span names="' + names.join(' ') + '">' + textToHTML(text) + '</span>';
 }
 
@@ -142,8 +149,18 @@ function insertMappingsIntoHTML(text, order) {
 
   var html = '';
   var lines = text.split('\n');
+
+  // Force a mapping at the start
   if (order[0].line !== 1 || order[0].column !== 0) order.unshift({ mapping: null, line: 1, column: 0 });
-  order.push({ mapping: null, line: lines.length, column: lines[lines.length - 1].length - 1 });
+
+  // Cut off the source map after the last line but guard against crazy source map data
+  var last = order[order.length - 1];
+  if (last.line > 0 && last.line <= lines.length) {
+    order.push({ mapping: null, line: last.line, column: lines[last.line - 1].length });
+  }
+
+  // Force a mapping at the end
+  order.push({ mapping: null, line: lines.length, column: lines[lines.length - 1].length });
 
   for (var i = 1; i < order.length; i++) {
     var start = i - 1;
@@ -161,7 +178,7 @@ function insertMappingsIntoHTML(text, order) {
 
 function mappingToDisplayHTML(mapping) {
   var text = mapping.originalLine + ':' + mapping.originalColumn + ' -> ' + mapping.generatedLine + ':' + mapping.generatedColumn;
-  return wrapWithMappings(text, [mapping]);
+  return wrapWithMappings(text, [mapping]) + ' in ' + textToHTML(forceSourceToString(mapping.source));
 }
 
 function getOriginal(mapping) {
@@ -180,6 +197,28 @@ function getGenerated(mapping) {
   };
 }
 
+function updateForSource(map, source) {
+  var originalOrder = [];
+  var generatedOrder = [];
+  map.eachMapping(function(m) { originalOrder.push(m); }, null, sourceMap.SourceMapConsumer.ORIGINAL_ORDER);
+  map.eachMapping(function(m) { generatedOrder.push(m); }, null, sourceMap.SourceMapConsumer.GENERATED_ORDER);
+
+  // Mozilla's library doesn't actually sort correctly for the Haxe output
+  function compareOriginal(a, b) { return a.originalLine - b.originalLine || a.originalColumn - b.originalColumn; }
+  function compareGenerated(a, b) { return a.generatedLine - b.generatedLine || a.generatedColumn - b.generatedColumn; }
+  originalOrder.sort(function(a, b) { return compareOriginal(a, b) || compareGenerated(a, b); });
+  generatedOrder.sort(function(a, b) { return compareGenerated(a, b) || compareOriginal(a, b); });
+
+  function limitToSource(m) { return forceSourceToString(m.source).indexOf(source) >= 0; }
+  originalOutput.innerHTML = insertMappingsIntoHTML(originalInput.value, originalOrder.filter(limitToSource).map(getOriginal));
+  generatedOutput.innerHTML = insertMappingsIntoHTML(generatedInput.value, generatedOrder.filter(limitToSource).map(getGenerated));
+  mapOutput.innerHTML = generatedOrder.map(mappingToDisplayHTML).join('\n');
+
+  originalOutput.scrollTop = 0;
+  generatedOutput.scrollTop = 0;
+  mapOutput.scrollTop = 0;
+}
+
 function update() {
   try {
     var map = new sourceMap.SourceMapConsumer(mapInput.value);
@@ -189,14 +228,14 @@ function update() {
     return;
   }
 
-  var originalOrder = [];
-  var generatedOrder = [];
-  map.eachMapping(function(m) { originalOrder.push(m); }, null, sourceMap.SourceMapConsumer.ORIGINAL_ORDER);
-  map.eachMapping(function(m) { generatedOrder.push(m); }, null, sourceMap.SourceMapConsumer.GENERATED_ORDER);
-
-  originalOutput.innerHTML = insertMappingsIntoHTML(originalInput.value, originalOrder.map(getOriginal));
-  generatedOutput.innerHTML = insertMappingsIntoHTML(generatedInput.value, generatedOrder.map(getGenerated));
-  mapOutput.innerHTML = originalOrder.map(mappingToDisplayHTML).join('\n');
+  var sources = map._sources.toArray();
+  selectSource.innerHTML = sources.map(function(s) { return '<option>' + textToHTML(s) + '</option>'; }).join('');
+  selectSource.selectedIndex = sources.length - 1;
+  selectSource.disabled = sources.length < 2;
+  selectSource.onchange = function() {
+    updateForSource(map, sources[selectSource.selectedIndex]);
+  };
+  updateForSource(map, sources[selectSource.selectedIndex]);
 }
 
 function loadExample(example) {

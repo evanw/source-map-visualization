@@ -8,7 +8,8 @@ function createExample(name, dir, original, generated, map) {
     name: name,
     original: fs.readFileSync(path.join(__dirname, dir, original), 'utf8'),
     generated: fs.readFileSync(path.join(__dirname, dir, generated), 'utf8'),
-    map: JSON.parse(fs.readFileSync(path.join(__dirname, dir, map), 'utf8')),
+    map: JSON.parse(fs.readFileSync(path.join(__dirname, dir, map), 'utf8')
+      .replace(new RegExp(__dirname + '[^"]*/([^/"]+)(?!")', 'g'), '$1')),
   };
 }
 
@@ -44,6 +45,7 @@ fs.writeFileSync('../examples.js', 'var examples = ' + JSON.stringify([
   createExample('CoffeeScriptRedux', 'coffee-script-redux', 'original.coffee', 'generated.js', 'generated.js.map'),
   createExample('TypeScript', 'typescript', 'original.ts', 'original.js', 'original.js.map'),
   createExample('JSX', 'jsx', 'original.jsx', 'generated.js', 'generated.js.mapping'),
+  createExample('Haxe', 'haxe', 'Original.hx', 'generated.js', 'generated.js.map'),
 ]) + ';\n');
 
 // Why doesn't node have spawnSync?
