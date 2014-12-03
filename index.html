@@ -99,9 +99,46 @@ span.hover {
       </tr>
     </table>
 
-    <script src="source-map.min.js"></script>
+    <h2>b64 Helper</h2>
+    <table>
+      <tr>
+        <th>VLQ <input id="b64in" /></th>
+        <th>Column <input id="b64gcol" /></th>
+        <th>File <input id="b64ssource" /></th>
+        <th>Line <input id="b64sline" /></th>
+        <th>Column <input id="b64scol" /></th>
+        <th>Name <input id="b64sname" /></th>
+      </tr>
+      <tr>
+        <td>Segment</td>
+        <td>Generated column offset</td>
+        <td>Generated File Source offset.</td>
+        <td>Source Line Skip</td>
+        <td>Source Column Skip</td>
+        <td>Name list skip</td>
+      </tr>
+    </table>
+
+
+    <script src="inspector.js"></script>
     <script src="examples.js"></script>
     <script>
+
+var smp = WebInspector.SourceMap.prototype;
+b64in.oninput = function(){
+  var it = new WebInspector.SourceMap.StringCharIterator(b64in.value);
+
+  [
+    b64gcol, b64ssource, b64sline, b64scol, b64sname
+  ].forEach(function(out){
+    out.value = '';
+    if (it.hasNext()) out.value = next()
+  });
+
+  function next(){
+    return smp._decodeVLQ.call(smp, it);
+  }
+};
 
 // The generated mappings for the JSX output contain undefined in some places
 function forceSourceToString(text) {
