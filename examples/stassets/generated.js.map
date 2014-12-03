@@ -1,0 +1,2 @@
+)]}'
+{"version":3,"file":"/vendors.js","sections":[{"map":{"version":3,"file":"lib.js","sourceRoot":"","sources":["lib.coffee"],"names":[],"mappings":";AAAA;AAAA,MAAA,MAAA;;AAAA,EAAA,MAAA,GAAS,SAAC,CAAD,GAAA;WAAM,CAAA,GAAI,EAAV;EAAA,CAAT,CAAA;AAAA","sourcesContent":["square = (x)-> x * x\n"]},"offset":{"line":1,"column":0}}]}

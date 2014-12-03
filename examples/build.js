@@ -8,8 +8,7 @@ function createExample(name, dir, original, generated, map) {
     name: name,
     original: fs.readFileSync(path.join(__dirname, dir, original), 'utf8'),
     generated: fs.readFileSync(path.join(__dirname, dir, generated), 'utf8'),
-    map: JSON.parse(fs.readFileSync(path.join(__dirname, dir, map), 'utf8')
-      .replace(new RegExp(__dirname + '[^"]*/([^/"]+)(?!")', 'g'), '$1')),
+    map: fs.readFileSync(path.join(__dirname, dir, map), 'utf8'),
   };
 }
 
@@ -38,15 +37,16 @@ run([
   path.join(__dirname, 'jsx/generated.js'),
   path.join(__dirname, 'jsx/original.jsx')], function() {
 
-// Create examples
-fs.writeFileSync('../examples.js', 'var examples = ' + JSON.stringify([
-  createExample('Simple', 'simple', 'original.js', 'generated.js', 'generated.js.map'),
-  createExample('CoffeeScript', 'coffee-script', 'original.coffee', 'original.js', 'original.map'),
-  createExample('CoffeeScriptRedux', 'coffee-script-redux', 'original.coffee', 'generated.js', 'generated.js.map'),
-  createExample('TypeScript', 'typescript', 'original.ts', 'original.js', 'original.js.map'),
-  createExample('JSX', 'jsx', 'original.jsx', 'generated.js', 'generated.js.mapping'),
-  createExample('Haxe', 'haxe', 'Original.hx', 'generated.js', 'generated.js.map'),
-]) + ';\n');
+  // Create examples
+  examples = [
+    createExample('Simple', 'simple', 'original.js', 'generated.js', 'generated.js.map'),
+    createExample('CoffeeScript', 'coffee-script', 'original.coffee', 'original.js', 'original.js.map'),
+    createExample('CoffeeScriptRedux', 'coffee-script-redux', 'original.coffee', 'generated.js', 'generated.js.map'),
+    createExample('TypeScript', 'typescript', 'original.ts', 'original.js', 'original.js.map'),
+    createExample('JSX', 'jsx', 'original.jsx', 'generated.js', 'generated.js.mapping'),
+    createExample('Haxe', 'haxe', 'Original.hx', 'generated.js', 'generated.js.map'),
+    createExample('Stassets', 'stassets', 'original.coffee', 'generated.js', 'generated.js.map'),
+  ]
 
-// Why doesn't node have spawnSync?
+  fs.writeFileSync('../examples.js', 'var examples = ' + JSON.stringify(examples) + ';\n');
 }); }); }); }); });
