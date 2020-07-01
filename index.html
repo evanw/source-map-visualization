@@ -222,10 +222,6 @@
         : insertMappingsIntoHTML(sourceContent, originalOrder.filter(limitToSource).map(getOriginal));
       generatedOutput.innerHTML = insertMappingsIntoHTML(generatedInput.value, generatedOrder.filter(limitToSource).map(getGenerated));
       mapOutput.innerHTML = generatedOrder.map(mappingToDisplayHTML).join('\n');
-
-      originalOutput.scrollTop = 0;
-      generatedOutput.scrollTop = 0;
-      mapOutput.scrollTop = 0;
     }
 
     function update() {
