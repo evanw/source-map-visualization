@@ -119,11 +119,18 @@
       return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
-    function wrapWithMappings(text, mappings) {
+    function wrapWithMappings(text, mappings, isGenerated) {
       var names = mappings.filter(function (m) { return m !== null; }).map(function (m) {
         return m.originalLine + '_' + m.originalColumn + '_' + m.generatedLine + '_' + m.generatedColumn + '_' + forceSourceToString(m.source).replace(/[^\w]/g, '_');
       });
-      return '<span names="' + names.join(' ') + '">' + textToHTML(text) + '</span>';
+      var html = textToHTML(text);
+      var after = '';
+      if (isGenerated) {
+        var lines = html.split('\n');
+        html = lines[0];
+        after = [''].concat(lines.slice(1)).join('\n');
+      }
+      return '<span names="' + names.join(' ') + '">' + html + '</span>' + after;
     }
 
     function lineSlice(lines, a, b) {
@@ -133,7 +140,7 @@
       var column1 = a.column;
       var column2 = b.column;
 
-      // Clamp lines in bounds (the JSX compiler generates wildly out-of-bounds numbers)
+      // Clamp lines in bounds
       if (line1 < 0) line1 = column1 = 0;
       if (line2 < 0) line2 = column2 = 0;
       if (line1 >= lines.length) { line1 = lines.length - 1; column1 = lines[line1].length; }
@@ -149,7 +156,7 @@
         lines[line2].slice(0, column2)).join('\n');
     }
 
-    function insertMappingsIntoHTML(text, order) {
+    function insertMappingsIntoHTML(text, order, isGenerated) {
       if (order.length === 0) {
         return textToHTML(text);
       }
@@ -177,7 +184,7 @@
           next = order[++i];
         }
         var slice = lineSlice(lines, previous, next);
-        html += previous.mapping !== null ? wrapWithMappings(slice, order.slice(start, i).map(function (m) { return m.mapping; })) : textToHTML(slice);
+        html += previous.mapping !== null ? wrapWithMappings(slice, order.slice(start, i).map(function (m) { return m.mapping; }), isGenerated) : textToHTML(slice);
       }
 
       return html;
@@ -219,8 +226,8 @@
       try { var sourceContent = map.sourceContentFor(source) } catch (e) { }
       function limitToSource(m) { return forceSourceToString(m.source).indexOf(source) >= 0; }
       originalOutput.innerHTML = sourceContent === void 0 ? textToHTML('No original source for "' + source + '" found in source map.')
-        : insertMappingsIntoHTML(sourceContent, originalOrder.filter(limitToSource).map(getOriginal));
-      generatedOutput.innerHTML = insertMappingsIntoHTML(generatedInput.value, generatedOrder.filter(limitToSource).map(getGenerated));
+        : insertMappingsIntoHTML(sourceContent, originalOrder.filter(limitToSource).map(getOriginal), false);
+      generatedOutput.innerHTML = insertMappingsIntoHTML(generatedInput.value, generatedOrder.filter(limitToSource).map(getGenerated), true);
       mapOutput.innerHTML = generatedOrder.map(mappingToDisplayHTML).join('\n');
     }
 
