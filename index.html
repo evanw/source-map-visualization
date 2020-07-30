@@ -225,7 +225,7 @@
 
       try { var sourceContent = map.sourceContentFor(source) } catch (e) { }
       function limitToSource(m) { return forceSourceToString(m.source).indexOf(source) >= 0; }
-      originalOutput.innerHTML = sourceContent === void 0 ? textToHTML('No original source for "' + source + '" found in source map.')
+      originalOutput.innerHTML = sourceContent == null ? textToHTML('No original source for "' + source + '" found in source map.')
         : insertMappingsIntoHTML(sourceContent, originalOrder.filter(limitToSource).map(getOriginal), false);
       generatedOutput.innerHTML = insertMappingsIntoHTML(generatedInput.value, generatedOrder.filter(limitToSource).map(getGenerated), true);
       mapOutput.innerHTML = generatedOrder.map(mappingToDisplayHTML).join('\n');
