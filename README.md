@@ -2,4 +2,4 @@
 
 Demo: [http://evanw.github.io/source-map-visualization/](http://evanw.github.io/source-map-visualization/)
 
-A quick-and-dirty visualization of [source map](https://github.com/mozilla/source-map) data. Useful for debugging generated source maps.
+This is a visualization of JavaScript source map data, which is useful for debugging problems with generated source maps. It's designed to be high-performance so it doesn't fall over with huge source maps.
