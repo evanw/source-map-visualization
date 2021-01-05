@@ -4,6 +4,7 @@
 
   const dragTarget = document.getElementById('dragTarget');
   const uploadFiles = document.getElementById('uploadFiles');
+  const loadExample = document.getElementById('loadExample');
   let dragging = 0;
   let filesInput;
 
@@ -44,6 +45,10 @@
     document.body.appendChild(filesInput);
     filesInput.click();
     filesInput.onchange = () => startLoading(filesInput.files);
+  };
+
+  loadExample.onclick = () => {
+    finishLoading(exampleJS, exampleMap);
   };
 
   ////////////////////////////////////////////////////////////////////////////////
@@ -645,14 +650,14 @@
         }
       }
 
-      // Binary search to find the first mapping that is > index
+      // Binary search to find the first mapping that is >= index
       let firstMapping = 0;
       let mappingCount = mappings.length;
       while (mappingCount > 0) {
         let step = ((mappingCount / 5) >> 1) * 5;
         let it = firstMapping + step;
         let mappingLine = mappings[it + mappingsOffset];
-        if (mappingLine < row || (mappingLine === row && mappings[it + mappingsOffset + 1] <= index)) {
+        if (mappingLine < row || (mappingLine === row && mappings[it + mappingsOffset + 1] < index)) {
           firstMapping = it + 5;
           mappingCount -= step + 5;
         } else {
@@ -660,8 +665,20 @@
         }
       }
 
-      // Back up to the one before it if there is one on the same line
-      if (firstMapping > 0 && mappings[firstMapping - 5 + mappingsOffset] === row) firstMapping -= 5;
+      // Back up to the previous mapping if we're at the end of the line or the mapping we found is after us
+      if (firstMapping > 0 && mappings[firstMapping - 5 + mappingsOffset] === row && (
+        firstMapping >= mappings.length ||
+        mappings[firstMapping + mappingsOffset] > row ||
+        mappings[firstMapping + mappingsOffset + 1] > index
+      )) {
+        firstMapping -= 5;
+      }
+
+      // Seek to the first of any duplicate mappings
+      const current = mappings[firstMapping + mappingsOffset + 1];
+      while (firstMapping > 0 && mappings[firstMapping - 5 + mappingsOffset] === row && mappings[firstMapping - 5 + mappingsOffset + 1] === current) {
+        firstMapping -= 5;
+      }
 
       function indexToColumn(index) {
         // If there is no underlying line, just use one column per index
@@ -681,13 +698,22 @@
         let endIndex = startIndex > endOfLineIndex ? startIndex : endOfLineIndex;
         let isLastMappingInLine = false;
 
+        // Ignore subsequent duplicate mappings
+        if (map > 0 && mappings[map - 5 + mappingsOffset] === row && mappings[map - 5 + mappingsOffset + 1] === startIndex) {
+          return null;
+        }
+
+        // Skip past any duplicate mappings after us so we can get to the next non-duplicate mapping
+        while (map + 5 < mappings.length && mappings[map + 5 + mappingsOffset] === row && mappings[map + 5 + mappingsOffset + 1] === startIndex) {
+          map += 5;
+        }
+
         // Extend this mapping up to the next mapping if it's on the same line
         if (map + 5 < mappings.length && mappings[map + 5 + mappingsOffset] === row) {
           endIndex = mappings[map + 5 + mappingsOffset + 1];
         } else if (endIndex === startIndex) {
           isLastMappingInLine = true;
         }
-        if (startIndex === endIndex && !isLastMappingInLine) return null;
 
         return {
           startIndex, startColumn: indexToColumn(startIndex),
@@ -711,7 +737,7 @@
 
     function boxForRange(x, y, row, columnWidth, { startColumn, endColumn }) {
       const x1 = Math.round(x - scrollX + margin + textPaddingX + startColumn * columnWidth + 1);
-      const x2 = Math.round(x - scrollX + margin + textPaddingX + (startColumn === endColumn ? startColumn + 4 : endColumn * columnWidth) - 1);
+      const x2 = Math.round(x - scrollX + margin + textPaddingX + (startColumn === endColumn ? startColumn * columnWidth + 4 : endColumn * columnWidth) - 1);
       const y1 = Math.round(y + textPaddingY - scrollY + row * rowHeight + 2);
       const y2 = Math.round(y + textPaddingY - scrollY + (row + 1) * rowHeight - 2);
       return [x1, y1, x2, y2];
@@ -938,12 +964,13 @@
             if (range === null) continue;
 
             // Check if this mapping is hovered
-            const isHovered = !!hoveredMapping &&
-              mappings[map] === hoveredMapping.generatedLine &&
-              mappings[map + 1] === hoveredMapping.generatedColumn &&
-              mappings[map + 2] === hoveredMapping.originalSource &&
+            const isHovered = hoveredMapping && (sourceIndex === null
+              ? mappings[map] === hoveredMapping.generatedLine &&
+              mappings[map + 1] === hoveredMapping.generatedColumn
+              : mappings[map + 2] === hoveredMapping.originalSource &&
               mappings[map + 3] === hoveredMapping.originalLine &&
-              mappings[map + 4] === hoveredMapping.originalColumn;
+              mappings[map + 4] === hoveredMapping.originalColumn
+            );
 
             // Add a rectangle to that color's batch
             const { startColumn, endColumn } = range;
@@ -1204,3 +1231,74 @@
     query.addListener(() => isInvalid = true);
   }
 })();
+
+const exampleJS = `// Generated by CoffeeScript 2.5.1
+(function() {
+  // Assignment:
+  var cubes, list, math, num, number, opposite, race, square;
+
+  number = 42;
+
+  opposite = true;
+
+  if (opposite) {
+    // Conditions:
+    number = -42;
+  }
+
+  // Functions:
+  square = function(x) {
+    return x * x;
+  };
+
+  // Arrays:
+  list = [1, 2, 3, 4, 5];
+
+  // Objects:
+  math = {
+    root: Math.sqrt,
+    square: square,
+    cube: function(x) {
+      return x * square(x);
+    }
+  };
+
+  // Splats:
+  race = function(winner, ...runners) {
+    return print(winner, runners);
+  };
+
+  if (typeof elvis !== \"undefined\" && elvis !== null) {
+    // Existence:
+    alert(\"I knew it!\");
+  }
+
+  // Array comprehensions:
+  cubes = (function() {
+    var i, len, results;
+    results = [];
+    for (i = 0, len = list.length; i < len; i++) {
+      num = list[i];
+      results.push(math.cube(num));
+    }
+    return results;
+  })();
+
+}).call(this);
+
+//# sourceMappingURL=original.js.map
+`;
+
+const exampleMap = `{
+  "version": 3,
+  "file": "original.js",
+  "sourceRoot": "",
+  "sources": [
+    "original.coffee"
+  ],
+  "names": [],
+  "mappings": ";AAAa;EAAA;AAAA,MAAA,KAAA,EAAA,IAAA,EAAA,IAAA,EAAA,GAAA,EAAA,MAAA,EAAA,QAAA,EAAA,IAAA,EAAA;;EACb,MAAA,GAAW;;EACX,QAAA,GAAW;;EAGX,IAAgB,QAAhB;;IAAA,MAAA,GAAS,CAAC,GAAV;GALa;;;EAQb,MAAA,GAAS,QAAA,CAAC,CAAD,CAAA;WAAO,CAAA,GAAI;EAAX,EARI;;;EAWb,IAAA,GAAO,CAAC,CAAD,EAAI,CAAJ,EAAO,CAAP,EAAU,CAAV,EAAa,CAAb,EAXM;;;EAcb,IAAA,GACE;IAAA,IAAA,EAAQ,IAAI,CAAC,IAAb;IACA,MAAA,EAAQ,MADR;IAEA,IAAA,EAAQ,QAAA,CAAC,CAAD,CAAA;aAAO,CAAA,GAAI,MAAA,CAAO,CAAP;IAAX;EAFR,EAfW;;;EAoBb,IAAA,GAAO,QAAA,CAAC,MAAD,EAAA,GAAS,OAAT,CAAA;WACL,KAAA,CAAM,MAAN,EAAc,OAAd;EADK;;EAIP,IAAsB,8CAAtB;;IAAA,KAAA,CAAM,YAAN,EAAA;GAxBa;;;EA2Bb,KAAA;;AAAS;IAAA,KAAA,sCAAA;;mBAAA,IAAI,CAAC,IAAL,CAAU,GAAV;IAAA,CAAA;;;AA3BI",
+  "sourcesContent": [
+    "# Assignment:\\nnumber   = 42\\nopposite = true\\n\\n# Conditions:\\nnumber = -42 if opposite\\n\\n# Functions:\\nsquare = (x) -> x * x\\n\\n# Arrays:\\nlist = [1, 2, 3, 4, 5]\\n\\n# Objects:\\nmath =\\n  root:   Math.sqrt\\n  square: square\\n  cube:   (x) -> x * square x\\n\\n# Splats:\\nrace = (winner, runners...) ->\\n  print winner, runners\\n\\n# Existence:\\nalert \\"I knew it!\\" if elvis?\\n\\n# Array comprehensions:\\ncubes = (math.cube num for num in list)\\n"
+  ]
+}`;
