@@ -465,6 +465,7 @@
 
   const canvas = document.createElement('canvas');
   const c = canvas.getContext('2d');
+  const monospaceFont = '14px monospace';
   const rowHeight = 21;
   const splitterWidth = 6;
   const margin = 64;
@@ -473,19 +474,13 @@
   let generatedTextArea;
   let hover = null;
 
-  function createTextArea({ sourceIndex, text, mappings, mappingsOffset, bounds }) {
-    const lines = text.split(/\r\n|\r|\n/g);
-    const monospaceFont = '14px monospace';
-    const shadowWidth = 16;
-    const textPaddingX = 5;
-    const textPaddingY = 1;
-    const scrollbarThickness = 16;
+  function splitTextIntoLinesAndRuns(text) {
+    c.font = monospaceFont;
+    const spaceWidth = c.measureText(' ').width;
     const spacesPerTab = 2;
-    let animate = null;
+    const lines = text.split(/\r\n|\r|\n/g);
+    const unicodeWidthCache = new Map();
     let longestLineInColumns = 0;
-    let lastLineIndex = lines.length - 1;
-    let scrollX = 0;
-    let scrollY = 0;
 
     for (let line = 0; line < lines.length; line++) {
       let raw = lines[line];
@@ -498,32 +493,90 @@
         let startIndex = i;
         let startColumn = column;
         let whitespace = 0;
+        let isSingleChunk = false;
 
         while (i < n) {
-          let c = raw.charCodeAt(i);
+          let c1 = raw.charCodeAt(i);
+          let c2;
 
           // Draw each tab into its own run
-          if (c === 0x09 /* tab */) {
+          if (c1 === 0x09 /* tab */) {
             if (i > startIndex) break;
+            isSingleChunk = true;
             column += spacesPerTab;
             column -= column % spacesPerTab;
             i++;
-            whitespace = c;
+            whitespace = c1;
             break;
           }
 
-          // Draw each non-ASCII character into its own run
-          if (c < 0x20 || c > 0x7E) {
+          // Draw each non-ASCII character into its own run (e.g. emoji)
+          if (c1 < 0x20 || c1 > 0x7E) {
             if (i > startIndex) break;
-            column++;
+            isSingleChunk = true;
             i++;
-            if (i < n && c >= 0xD800 && c <= 0xDBFF) i++;
+
+            // Consume another code unit if this code unit is a high surrogate
+            // and the next code point is a low surrogate. This handles code
+            // points that span two UTF-16 code units.
+            if (i < n && c1 >= 0xD800 && c1 <= 0xDBFF && (c2 = raw.charCodeAt(i)) >= 0xDC00 && c2 <= 0xDFFF) {
+              i++;
+            }
+
+            // This contains some logic to handle more complex emoji such as "👯‍♂️"
+            // which is [U+1F46F, U+200D, U+2642, U+FE0F].
+            while (i < n) {
+              c1 = raw.charCodeAt(i);
+
+              // Consume another code unit if the next code point is a variation selector
+              if ((c1 & ~0xF) === 0xFE00) {
+                i++;
+              }
+
+              // Consume another code unit if the next code point is a skin tone modifier
+              else if (c1 === 0xD83C && i + 1 < n && (c2 = raw.charCodeAt(i + 1)) >= 0xDFFB && c2 <= 0xDFFF) {
+                i += 2;
+              }
+
+              // Consume another code unit and stop if the next code point is a zero-width non-joiner
+              else if (c1 === 0x200C) {
+                i++;
+                break;
+              }
+
+              // Consume another code unit if the next code point is a zero-width joiner
+              else if (c1 === 0x200D) {
+                i++;
+
+                // Consume the next code point that is "joined" to this one
+                if (i < n) {
+                  c1 = raw.charCodeAt(i);
+                  i++;
+                  if (c1 >= 0xD800 && c1 <= 0xDBFF && i < n && (c2 = raw.charCodeAt(i)) >= 0xDC00 && c2 <= 0xDFFF) {
+                    i++;
+                  }
+                }
+              }
+
+              else {
+                break;
+              }
+            }
+
+            const key = raw.slice(startIndex, i);
+            let width = unicodeWidthCache.get(key);
+            if (width === void 0) {
+              width = Math.round(c.measureText(key).width / spaceWidth);
+              if (width < 1) width = 1;
+              unicodeWidthCache.set(key, width);
+            }
+            column += width;
             break;
           }
 
           // Draw runs of spaces in their own run
-          if (c === 0x20 /* space */) {
-            if (i === startIndex) whitespace = c;
+          if (c1 === 0x20 /* space */) {
+            if (i === startIndex) whitespace = c1;
             else if (!whitespace) break;
           } else {
             if (whitespace) break;
@@ -537,6 +590,7 @@
           isWhitespace: !!whitespace,
           startIndex, endIndex: i,
           startColumn, endColumn: column,
+          isSingleChunk,
           text:
             !whitespace ? raw.slice(startIndex, i) :
               whitespace === 0x20 /* space */ ? '·'.repeat(i - startIndex) :
@@ -547,6 +601,20 @@
       lines[line] = { raw, runs, endIndex: i, endColumn: column };
       longestLineInColumns = Math.max(longestLineInColumns, column);
     }
+
+    return { lines, longestLineInColumns };
+  }
+
+  function createTextArea({ sourceIndex, text, mappings, mappingsOffset, bounds }) {
+    const shadowWidth = 16;
+    const textPaddingX = 5;
+    const textPaddingY = 1;
+    const scrollbarThickness = 16;
+    let { lines, longestLineInColumns } = splitTextIntoLinesAndRuns(text);
+    let animate = null;
+    let lastLineIndex = lines.length - 1;
+    let scrollX = 0;
+    let scrollY = 0;
 
     for (let i = 0, n = mappings.length; i < n; i += 5) {
       let line = mappings[i + mappingsOffset];
@@ -633,8 +701,8 @@
         while (runs[nearbyRun].startColumn > column && nearbyRun > 0) nearbyRun--;
         while (runs[nearbyRun].endColumn < column && nearbyRun + 1 < runs.length) nearbyRun++;
         let run = runs[nearbyRun];
-        if (run.endIndex - run.startIndex === 1 && column <= run.endColumn) {
-          // A special case for tab stops
+        if (run.isSingleChunk && column <= run.endColumn) {
+          // A special case for single-character blocks such as tabs and emoji
           if (
             (tabStopBehavior === 'round' && fractionalColumn >= (run.startColumn + run.endColumn) / 2) ||
             (tabStopBehavior === 'floor' && fractionalColumn >= run.endColumn)
@@ -933,11 +1001,10 @@
             // Draw the runs
             let currentColumn = firstColumn;
             for (let run = firstRun; run <= lastRun; run++) {
-              let { isWhitespace, text, startColumn, endColumn } = runs[run];
-              let columnCount = endColumn - startColumn;
+              let { isWhitespace, text, startColumn, endColumn, isSingleChunk } = runs[run];
 
               // Limit the run to the visible columns (but only for ASCII runs)
-              if (columnCount > 1) {
+              if (!isSingleChunk) {
                 if (startColumn < currentColumn) {
                   text = text.slice(currentColumn - startColumn);
                   startColumn = currentColumn;
