@@ -371,9 +371,9 @@
 
     // Populate the file picker
     fileList.innerHTML = '';
-    for (const { name } of sm.sources) {
+    for (let sources = sm.sources, i = 0, n = sources.length; i < n; i++) {
       const option = document.createElement('option');
-      option.textContent = name;
+      option.textContent = `${i}: ${sources[i].name}`;
       fileList.appendChild(option);
     }
 
