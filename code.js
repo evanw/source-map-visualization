@@ -350,7 +350,7 @@
     for (let i = 0; i < sources.length; i++) {
       sources[i] = {
         name: sources[i],
-        content: sourcesContent && sourcesContent[i] || null,
+        content: sourcesContent && sourcesContent[i] || '',
         data: emptyData,
         dataLength: 0,
       };
