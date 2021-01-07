@@ -78,12 +78,32 @@ h2 {
 }
 
 #promptText section {
-  max-width: 600px;
+  max-width: 640px;
   margin: auto;
 }
 
-noscript {
-  color: red;
+#errorText {
+  display: none;
+}
+
+#errorText, noscript {
+  margin-top: 50px;
+  color: #f33;
+  background: rgba(255, 0, 0, 0.1);
+  padding: 15px 15px 15px 50px;
+  border: 1px solid #f33;
+  border-radius: 10px;
+}
+
+#errorText:before, noscript:before {
+  content: '🚫';
+  display: block;
+  width: 50px;
+  line-height: 22px;
+  text-align: center;
+  font-size: 28px;
+  float: left;
+  margin-left: -50px;
 }
 
 body {

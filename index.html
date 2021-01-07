@@ -15,8 +15,10 @@
       <p>This is a visualization of JavaScript source map data, which is useful for debugging problems with generated
         source maps. It's designed to be high-performance so it doesn't fall over with huge source maps.</p>
       <p>Drag and drop some files here or <button id="uploadFiles">Upload files</button> to get started. You can either
-        drop a single file with an inline source map, or a JavaScript file and a source map file together.</p>
+        drop a single JavaScript file with an inline source map comment, or a JavaScript file and a separate source map
+        file together.</p>
       <p>Or you can <button id="loadExample">Load an example</button> to play around with the visualization.</p>
+      <div id="errorText"></div>
       <noscript>This app requires JavaScript to work. Please enable JavaScript and reload the page.</noscript>
     </section>
   </div>

@@ -55,6 +55,7 @@
   // Loading
 
   const promptText = document.getElementById('promptText');
+  const errorText = document.getElementById('errorText');
   const toolbar = document.getElementById('toolbar');
 
   function isProbablySourceMap(file) {
@@ -70,16 +71,37 @@
     });
   }
 
+  function showLoadingError(text) {
+    errorText.style.display = 'block';
+    errorText.textContent = text;
+  }
+
   async function startLoading(files) {
     if (files.length === 1) {
-      const js = await loadFile(files[0]);
-      const match = /\/\/#\s*sourceMappingURL=data:(.*)/.exec(js);
+      const file0 = files[0];
+      const js = await loadFile(file0);
+      let match;
 
-      if (match) {
-        const comma = match[1].indexOf(',');
-        if (comma >= 0) {
-          finishLoading(js, atob(match[1].slice(comma + 1)));
-        }
+      if ((match = /\/\/#\s*sourceMappingURL=data:[^,]+,([A-Za-z0-9+/=]+)/.exec(js)) && dataURL[1]) {
+        finishLoading(js, atob(dataURL[1]));
+      }
+
+      else if (/\/\/#\s*sourceMappingURL=data:/.test(js)) {
+        showLoadingError(`Could not find any base64 data in the embedded "//# sourceMappingURL=" comment.`);
+      }
+
+      else if (/\/\/#\s*sourceMappingURL=/.test(js)) {
+        showLoadingError(`The embedded "//# sourceMappingURL=" comment does not contain an inline source map. ` +
+          `You must import both the JavaScript file and the source map file that goes with it.`);
+      }
+
+      else if (isProbablySourceMap(file0)) {
+        showLoadingError(`You cannot import just a source map by itself. ` +
+          `You must import both the source map and the JavaScript file that goes with it.`);
+      }
+
+      else {
+        showLoadingError(`Failed to find an embedded "//# sourceMappingURL=" comment in the imported file.`);
       }
     }
 
@@ -95,13 +117,21 @@
         finishLoading(js, map);
       }
 
-      if (isProbablySourceMap(file1)) {
+      else if (isProbablySourceMap(file1)) {
         const jsPromise = loadFile(file0);
         const mapPromise = loadFile(file1);
         const js = await jsPromise;
         const map = await mapPromise;
         finishLoading(js, map);
       }
+
+      else {
+        showLoadingError(`The source map file must end in either ".map" or ".json" to be detected.`);
+      }
+    }
+
+    else {
+      showLoadingError(`Please import either 1 or 2 files.`);
     }
   }
 
@@ -125,7 +155,9 @@
     let i = 0;
 
     function decodeError(text) {
-      throw new Error(`Invalid VLQ data at index ${i}: ${text}`);
+      const error = `Invalid VLQ data at index ${i}: ${text}`;
+      showLoadingError(`The "mappings" field of the imported source map contains invalid data. ${error}.`);
+      throw new Error(error);
     }
 
     function decodeVLQ() {
@@ -340,8 +372,25 @@
   }
 
   function parseSourceMap(json) {
-    json = JSON.parse(json);
-    if (json.version !== 3 || !(json.sources instanceof Array) || typeof json.mappings !== 'string') {
+    try {
+      json = JSON.parse(json);
+    } catch (e) {
+      showLoadingError(`The imported source map contains invalid JSON data: ${e && e.message || e}`);
+      throw e;
+    }
+
+    if (json.version !== 3) {
+      showLoadingError(`The imported source map is invalid. Expected the "version" field to contain the number 3.`);
+      throw new Error('Invalid source map');
+    }
+
+    if (!(json.sources instanceof Array) || json.sources.some(x => typeof x !== 'string')) {
+      showLoadingError(`The imported source map is invalid. Expected the "sources" field to be an array of strings.`);
+      throw new Error('Invalid source map');
+    }
+
+    if (typeof json.mappings !== 'string') {
+      showLoadingError(`The imported source map is invalid. Expected the "mappings" field to be a string.`);
       throw new Error('Invalid source map');
     }
 
