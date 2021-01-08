@@ -75,6 +75,10 @@
   }
 
   function showLoadingError(text) {
+    promptText.style.display = 'block';
+    toolbar.style.display = 'none';
+    statusBar.style.display = 'none';
+    canvas.style.display = 'none';
     errorText.style.display = 'block';
     errorText.textContent = text;
   }
@@ -454,6 +458,7 @@
     promptText.style.display = 'none';
     toolbar.style.display = 'flex';
     statusBar.style.display = 'flex';
+    canvas.style.display = 'block';
     const sm = parseSourceMap(map);
 
     // Populate the file picker
