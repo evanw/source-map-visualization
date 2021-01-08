@@ -161,6 +161,7 @@
     let originalSource = 0;
     let originalLine = 0;
     let originalColumn = 0;
+    let originalName = 0;
     let needToSortGeneratedColumns = false;
     let i = 0;
 
@@ -245,6 +246,7 @@
 
       // It's valid for a mapping to have 1, 4, or 5 variable-length fields
       let isOriginalSourceMissing = true;
+      let isOriginalNameMissing = true;
       if (i < n) {
         c = mappings.charCodeAt(i);
         if (c === 44 /* , */) {
@@ -267,13 +269,18 @@
           originalColumn += originalColumnDelta;
           if (originalColumn < 0) decodeError('Invalid original column');
 
-          // Ignore the optional name index
+          // Check for the optional name index
           if (i < n) {
             c = mappings.charCodeAt(i);
             if (c === 44 /* , */) {
               i++;
             } else if (c !== 59 /* ; */) {
-              decodeVLQ();
+              isOriginalNameMissing = false;
+
+              // Read the optional name index
+              const originalNameDelta = decodeVLQ();
+              originalName += originalNameDelta;
+              if (originalName < 0) decodeError('Invalid original name');
 
               // Handle the next character
               if (i < n) {
@@ -306,6 +313,7 @@
         data[dataLength + 3] = originalLine;
         data[dataLength + 4] = originalColumn;
       }
+      data[dataLength + 5] = isOriginalNameMissing ? -1 : originalName;
       dataLength += 6;
     }
 
@@ -422,7 +430,7 @@
       throw new Error('Invalid source map');
     }
 
-    const { sources, sourcesContent, mappings } = json;
+    const { sources, sourcesContent, names, mappings } = json;
     const emptyData = new Int32Array(0);
     for (let i = 0; i < sources.length; i++) {
       sources[i] = {
@@ -435,7 +443,7 @@
 
     const data = decodeMappings(mappings, sources.length);
     generateInverseMappings(sources, data);
-    return { sources, data };
+    return { sources, names, data };
   }
 
   const toolbarHeight = 32;
@@ -458,6 +466,7 @@
 
     // Update the original text area when the source changes
     const otherSource = index => sm.sources[index].name;
+    const originalName = index => sm.names[index];
     originalTextArea = null;
     if (sm.sources.length > 0) {
       fileList.selectedIndex = 0;
@@ -469,6 +478,7 @@
           mappings: source.data,
           mappingsOffset: 3,
           otherSource,
+          originalName,
           bounds() {
             return {
               x: 0,
@@ -490,6 +500,7 @@
       mappings: sm.data,
       mappingsOffset: 0,
       otherSource,
+      originalName,
       bounds() {
         const x = (innerWidth >> 1) + ((splitterWidth + 1) >> 1);
         return {
@@ -697,7 +708,7 @@
     return { lines, longestLineInColumns };
   }
 
-  function createTextArea({ sourceIndex, text, mappings, mappingsOffset, otherSource, bounds }) {
+  function createTextArea({ sourceIndex, text, mappings, mappingsOffset, otherSource, originalName, bounds }) {
     const shadowWidth = 16;
     const textPaddingX = 5;
     const textPaddingY = 1;
@@ -976,6 +987,7 @@
                   originalSource: mappings[firstMapping + 2],
                   originalLine: mappings[firstMapping + 3],
                   originalColumn: mappings[firstMapping + 4],
+                  originalName: mappings[firstMapping + 5],
                 };
               }
 
@@ -1245,6 +1257,9 @@
         if (hoveredMapping) {
           if (sourceIndex === null) {
             status = `Line ${hoveredMapping.generatedLine + 1}, Offset ${hoveredMapping.generatedColumn}`;
+            if (hoveredMapping.originalName !== -1) {
+              status += `, Name ${originalName(hoveredMapping.originalName)}`;
+            }
           } else {
             status = `Line ${hoveredMapping.originalLine + 1}, Offset ${hoveredMapping.originalColumn}`;
             if (hoveredMapping.originalSource !== sourceIndex) {
