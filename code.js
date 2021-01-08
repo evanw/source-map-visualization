@@ -82,19 +82,25 @@
   async function startLoading(files) {
     if (files.length === 1) {
       const file0 = files[0];
-      const js = await loadFile(file0);
-      let match;
+      const code = await loadFile(file0);
 
-      if ((match = /\/\/#\s*sourceMappingURL=data:[^,]+,([A-Za-z0-9+/=]+)/.exec(js)) && dataURL[1]) {
-        finishLoading(js, atob(dataURL[1]));
+      // Check for both "//" and "/*" comments
+      let match = /\/\/#\s*sourceMappingURL=data:([^,]+),([^ ]+)/.exec(code);
+      if (!match) match = /\/\*#\s*sourceMappingURL=data:((?:[^,*]|\*[^/])+),((?:[^ *]|\*[^/])+)(?:[^*]|\*[^/])*\*\//.exec(code);
+
+      // Check for a non-empty data URL payload
+      if (match && match[2]) {
+        const parts = match[1].split(';');
+        const map = parts.indexOf('charset=utf-8') >= 0 ? decodeURIComponent(match[2]) : atob(match[2]);
+        finishLoading(code, map);
       }
 
-      else if (/\/\/#\s*sourceMappingURL=data:/.test(js)) {
-        showLoadingError(`Could not find any base64 data in the embedded "//# sourceMappingURL=" comment.`);
+      else if (match = /\/([/*])#\s*sourceMappingURL=data:/.exec(code)) {
+        showLoadingError(`Could not find any base64 data in the embedded "/${match[1]}# sourceMappingURL=" comment.`);
       }
 
-      else if (/\/\/#\s*sourceMappingURL=/.test(js)) {
-        showLoadingError(`The embedded "//# sourceMappingURL=" comment does not contain an inline source map. ` +
+      else if (match = /\/([/*])#\s*sourceMappingURL=/.exec(code)) {
+        showLoadingError(`The embedded "/${match[1]}# sourceMappingURL=" comment does not contain an inline source map. ` +
           `You must import both the JavaScript file and the source map file that goes with it.`);
       }
 
@@ -104,7 +110,8 @@
       }
 
       else {
-        showLoadingError(`Failed to find an embedded "//# sourceMappingURL=" comment in the imported file.`);
+        const c = file0.name.endsWith('ss') ? '*' : '/';
+        showLoadingError(`Failed to find an embedded "/${c}# sourceMappingURL=" comment in the imported file.`);
       }
     }
 
@@ -113,19 +120,19 @@
       const file1 = files[1];
 
       if (isProbablySourceMap(file0)) {
-        const jsPromise = loadFile(file1);
+        const codePromise = loadFile(file1);
         const mapPromise = loadFile(file0);
-        const js = await jsPromise;
+        const code = await codePromise;
         const map = await mapPromise;
-        finishLoading(js, map);
+        finishLoading(code, map);
       }
 
       else if (isProbablySourceMap(file1)) {
-        const jsPromise = loadFile(file0);
+        const codePromise = loadFile(file0);
         const mapPromise = loadFile(file1);
-        const js = await jsPromise;
+        const code = await codePromise;
         const map = await mapPromise;
-        finishLoading(js, map);
+        finishLoading(code, map);
       }
 
       else {
@@ -416,7 +423,7 @@
   const toolbarHeight = 32;
   const statusBarHeight = 32;
 
-  function finishLoading(js, map) {
+  function finishLoading(code, map) {
     const startTime = Date.now();
     promptText.style.display = 'none';
     toolbar.style.display = 'flex';
@@ -461,7 +468,7 @@
 
     generatedTextArea = createTextArea({
       sourceIndex: null,
-      text: js,
+      text: code,
       mappings: sm.data,
       mappingsOffset: 0,
       otherSource,
