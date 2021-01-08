@@ -797,6 +797,18 @@
         firstMapping -= 5;
       }
 
+      function columnToIndex(column) {
+        // If there is no underlying line, just use one index per column
+        let index = column;
+        if (runs.length > 0) {
+          while (runs[nearbyRun].startColumn > column && nearbyRun > 0) nearbyRun--;
+          while (runs[nearbyRun].endColumn < column && nearbyRun + 1 < runs.length) nearbyRun++;
+          let run = runs[nearbyRun];
+          index = column === run.endColumn ? run.endIndex : run.endIndex + column - run.startColumn;
+        }
+        return index;
+      }
+
       function indexToColumn(index) {
         // If there is no underlying line, just use one column per index
         let column = index;
@@ -847,6 +859,7 @@
         firstMapping,
         endOfLineIndex,
         endOfLineColumn,
+        columnToIndex,
         indexToColumn,
         rangeOfMapping,
       };
@@ -1037,7 +1050,8 @@
           let dx = x - scrollX + margin + textPaddingX;
           let dy = y - scrollY + textPaddingY;
           dy += (row + 0.7) * rowHeight;
-          const { firstRun, runs, firstMapping, endOfLineColumn, rangeOfMapping } = analyzeLine(row, firstColumn, firstColumn, 'floor');
+          const { firstRun, runs, firstMapping, endOfLineColumn, rangeOfMapping, columnToIndex } = analyzeLine(row, firstColumn, firstColumn, 'floor');
+          const lastIndex = columnToIndex(lastColumn);
 
           // Don't draw any text if the whole line is offscreen
           if (firstRun < runs.length) {
@@ -1072,7 +1086,7 @@
 
           // Draw the mappings
           for (let map = firstMapping; map < mappings.length; map += 5) {
-            if (mappings[map + mappingsOffset] !== row || mappings[map + mappingsOffset + 1] >= lastColumn) break;
+            if (mappings[map + mappingsOffset] !== row || mappings[map + mappingsOffset + 1] >= lastIndex) break;
             if (mappings[map + 2] === -1) continue;
 
             // Get the bounds of this mapping, which may be empty if it's ignored
