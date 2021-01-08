@@ -1054,7 +1054,7 @@
         const lastRow = Math.max(0, Math.ceil((scrollY - textPaddingY + height) / rowHeight));
 
         // Populate batches for the text
-        let hoverBox = null;
+        const hoverBoxes = [];
         const hoveredMapping = hover && hover.mapping;
         const mappingBatches = [];
         const badMappingBatches = [];
@@ -1112,20 +1112,34 @@
             if (range === null) continue;
 
             // Check if this mapping is hovered
-            const isHovered = hoveredMapping && (sourceIndex === null
-              ? mappings[map] === hoveredMapping.generatedLine &&
-              mappings[map + 1] === hoveredMapping.generatedColumn
-              : mappings[map + 2] === hoveredMapping.originalSource &&
-              mappings[map + 3] === hoveredMapping.originalLine &&
-              mappings[map + 4] === hoveredMapping.originalColumn
-            );
+            let isHovered = false;
+            if (hoveredMapping) {
+              const isGenerated = sourceIndex === null;
+              const hoverIsGenerated = hover.sourceIndex === null;
+              const matchesGenerated =
+                mappings[map] === hoveredMapping.generatedLine &&
+                mappings[map + 1] === hoveredMapping.generatedColumn;
+              const matchesOriginal =
+                mappings[map + 2] === hoveredMapping.originalSource &&
+                mappings[map + 3] === hoveredMapping.originalLine &&
+                mappings[map + 4] === hoveredMapping.originalColumn;
+              isHovered = hoveredMapping && (isGenerated !== hoverIsGenerated
+                // If this is on the opposite pane from the mouse, show all
+                // mappings that match the hovered mapping instead of showing
+                // an exact match.
+                ? matchesGenerated || matchesOriginal
+                // If this is on the same pane as the mouse, only show the exact
+                // mapping instead of showing everything that matches the target
+                // so hovering isn't confusing.
+                : isGenerated ? matchesGenerated : matchesOriginal);
+            }
 
             // Add a rectangle to that color's batch
             const { startColumn, endColumn } = range;
             const color = mappings[map + 3] % originalLineColors.length;
             const [x1, y1, x2, y2] = boxForRange(x, y, row, columnWidth, range);
             if (isHovered) {
-              hoverBox = { color, rect: [x1 - 2, y1 - 2, x2 - x1 + 4, y2 - y1 + 4] };
+              hoverBoxes.push({ color, rect: [x1 - 2, y1 - 2, x2 - x1 + 4, y2 - y1 + 4] });
             } else if (row >= lines.length || startColumn > endOfLineColumn) {
               badMappingBatches[color].push(x1, y1, x2 - x1, y2 - y1);
             } else if (endColumn > endOfLineColumn) {
@@ -1164,17 +1178,31 @@
         let status = '';
 
         // Draw the hover box for all text areas
-        if (hoverBox) {
-          const [rx, ry, rw, rh] = hoverBox.rect;
-          c.shadowColor = originalLineColors[hoverBox.color].replace(' 0.3)', ' 1)');
+        if (hoverBoxes.length > 0) {
+          // Draw the glows
           c.shadowBlur = 20;
           c.fillStyle = 'black';
-          c.fillRect(rx - 1, ry - 1, rw + 2, rh + 2);
+          for (const { rect: [rx, ry, rw, rh], color } of hoverBoxes) {
+            c.shadowColor = originalLineColors[color].replace(' 0.3)', ' 1)');
+            c.fillRect(rx - 1, ry - 1, rw + 2, rh + 2);
+          }
           c.shadowColor = 'transparent';
-          c.clearRect(rx, ry, rw, rh);
+
+          // Hollow out the boxes and draw a border around each one
+          for (const { rect: [rx, ry, rw, rh] } of hoverBoxes) {
+            c.clearRect(rx, ry, rw, rh);
+          }
           c.strokeStyle = textColor;
           c.lineWidth = 2;
-          c.strokeRect(rx, ry, rw, rh);
+          for (const { rect: [rx, ry, rw, rh] } of hoverBoxes) {
+            c.strokeRect(rx, ry, rw, rh);
+          }
+
+          // Hollow out the boxes again. This is necessary to remove overlapping
+          // borders from adjacent boxes due to duplicate mappings.
+          for (const { rect: [rx, ry, rw, rh] } of hoverBoxes) {
+            c.clearRect(rx + 2, ry + 1, rw - 4, rh - 2);
+          }
         }
 
         // Draw the hover caret, but only for this text area
@@ -1301,8 +1329,8 @@
         const generatedArrowHead = hover.sourceIndex === originalTextArea.sourceIndex;
         const [ox, oy, ow, oh] = originalHoverRect;
         const [gx, gy, , gh] = generatedHoverRect;
-        const x1 = Math.min(ox + ow, originalBounds.x + originalBounds.width) + (originalArrowHead ? 10 : 0);
-        const x2 = Math.max(gx, generatedBounds.x + margin) - (generatedArrowHead ? 10 : 0);
+        const x1 = Math.min(ox + ow, originalBounds.x + originalBounds.width) + (originalArrowHead ? 10 : 2);
+        const x2 = Math.max(gx, generatedBounds.x + margin) - (generatedArrowHead ? 10 : 2);
         const y1 = oy + oh / 2;
         const y2 = gy + gh / 2;
 
