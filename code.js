@@ -242,6 +242,12 @@
         continue;
       }
 
+      // Ignore stray commas
+      if (c === 44 /* , */) {
+        i++;
+        continue;
+      }
+
       // Read the generated column
       const generatedColumnDelta = decodeVLQ();
       if (generatedColumnDelta < 0) needToSortGeneratedColumns = true;
