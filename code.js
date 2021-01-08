@@ -204,13 +204,28 @@
         // The generated columns are very rarely out of order. In that case,
         // sort them with insertion since they are very likely almost ordered.
         if (needToSortGeneratedColumns) {
-          for (let j = generatedLineStart + 5; j < dataLength; j += 5) {
-            let genL = data[j], genC = data[j + 1], origS = data[j + 2], origL = data[j + 3], origC = data[j + 4];
-            let k = j - 5;
-            for (; k >= generatedLineStart && data[k + 1] > genC; k -= 5) {
-              data[k + 5] = data[k], data[k + 6] = data[k + 1], data[k + 7] = data[k + 2], data[k + 8] = data[k + 3], data[k + 9] = data[k + 4];
+          for (let j = generatedLineStart + 6; j < dataLength; j += 6) {
+            const genL = data[j];
+            const genC = data[j + 1];
+            const origS = data[j + 2];
+            const origL = data[j + 3];
+            const origC = data[j + 4];
+            const origN = data[j + 5];
+            let k = j - 6;
+            for (; k >= generatedLineStart && data[k + 1] > genC; k -= 6) {
+              data[k + 6] = data[k];
+              data[k + 7] = data[k + 1];
+              data[k + 8] = data[k + 2];
+              data[k + 9] = data[k + 3];
+              data[k + 10] = data[k + 4];
+              data[k + 11] = data[k + 5];
             }
-            data[k + 5] = genL, data[k + 6] = genC, data[k + 7] = origS, data[k + 8] = origL, data[k + 9] = origC;
+            data[k + 6] = genL;
+            data[k + 7] = genC;
+            data[k + 8] = origS;
+            data[k + 9] = origL;
+            data[k + 10] = origC;
+            data[k + 11] = origN;
           }
         }
 
@@ -275,7 +290,7 @@
       }
 
       // Append the mapping to the typed array
-      if (dataLength + 5 > data.length) {
+      if (dataLength + 6 > data.length) {
         const newData = new Int32Array(data.length << 1);
         newData.set(data);
         data = newData;
@@ -291,7 +306,7 @@
         data[dataLength + 3] = originalLine;
         data[dataLength + 4] = originalColumn;
       }
-      dataLength += 5;
+      dataLength += 6;
     }
 
     return data.subarray(0, dataLength);
@@ -301,7 +316,7 @@
     let longestDataLength = 0;
 
     // Scatter the mappings to the individual sources
-    for (let i = 0, n = data.length; i < n; i += 5) {
+    for (let i = 0, n = data.length; i < n; i += 6) {
       const originalSource = data[i + 2];
       if (originalSource === -1) continue;
 
@@ -310,7 +325,7 @@
       let j = source.dataLength;
 
       // Append the mapping to the typed array
-      if (j + 5 > inverseData.length) {
+      if (j + 6 > inverseData.length) {
         const newLength = inverseData.length << 1;
         const newData = new Int32Array(newLength > 1024 ? newLength : 1024);
         newData.set(inverseData);
@@ -321,7 +336,8 @@
       inverseData[j + 2] = originalSource;
       inverseData[j + 3] = data[i + 3];
       inverseData[j + 4] = data[i + 4];
-      j += 5;
+      inverseData[j + 5] = data[i + 5];
+      j += 6;
       source.dataLength = j;
       if (j > longestDataLength) longestDataLength = j;
     }
@@ -347,8 +363,8 @@
 
     // From: https://en.wikipedia.org/wiki/Merge_sort
     function topDownSplitMerge(B, iBegin, iEnd, A) {
-      if (iEnd - iBegin <= 5) return;
-      const iMiddle = ((iEnd / 5 + iBegin / 5) >> 1) * 5;
+      if (iEnd - iBegin <= 6) return;
+      const iMiddle = ((iEnd / 6 + iBegin / 6) >> 1) * 6;
       topDownSplitMerge(A, iBegin, iMiddle, B);
       topDownSplitMerge(A, iMiddle, iEnd, B);
       topDownMerge(B, iBegin, iMiddle, iEnd, A);
@@ -357,7 +373,7 @@
     // From: https://en.wikipedia.org/wiki/Merge_sort
     function topDownMerge(A, iBegin, iMiddle, iEnd, B) {
       let i = iBegin, j = iMiddle;
-      for (let k = iBegin; k < iEnd; k += 5) {
+      for (let k = iBegin; k < iEnd; k += 6) {
         if (i < iMiddle && (j >= iEnd ||
           // Compare mappings first by original line (index 3) and then by original column (index 4)
           A[i + 3] < A[j + 3] ||
@@ -368,14 +384,16 @@
           B[k + 2] = A[i + 2];
           B[k + 3] = A[i + 3];
           B[k + 4] = A[i + 4];
-          i = i + 5;
+          B[k + 5] = A[i + 5];
+          i += 6;
         } else {
           B[k] = A[j];
           B[k + 1] = A[j + 1];
           B[k + 2] = A[j + 2];
           B[k + 3] = A[j + 3];
           B[k + 4] = A[j + 4];
-          j = j + 5;
+          B[k + 5] = A[j + 5];
+          j += 6;
         }
       }
     }
@@ -690,7 +708,7 @@
     let scrollX = 0;
     let scrollY = 0;
 
-    for (let i = 0, n = mappings.length; i < n; i += 5) {
+    for (let i = 0, n = mappings.length; i < n; i += 6) {
       let line = mappings[i + mappingsOffset];
       let column = mappings[i + mappingsOffset + 1];
       if (line < lines.length) {
@@ -796,30 +814,30 @@
       let firstMapping = 0;
       let mappingCount = mappings.length;
       while (mappingCount > 0) {
-        let step = ((mappingCount / 5) >> 1) * 5;
+        let step = ((mappingCount / 6) >> 1) * 6;
         let it = firstMapping + step;
         let mappingLine = mappings[it + mappingsOffset];
         if (mappingLine < row || (mappingLine === row && mappings[it + mappingsOffset + 1] < index)) {
-          firstMapping = it + 5;
-          mappingCount -= step + 5;
+          firstMapping = it + 6;
+          mappingCount -= step + 6;
         } else {
           mappingCount = step;
         }
       }
 
       // Back up to the previous mapping if we're at the end of the line or the mapping we found is after us
-      if (firstMapping > 0 && mappings[firstMapping - 5 + mappingsOffset] === row && (
+      if (firstMapping > 0 && mappings[firstMapping - 6 + mappingsOffset] === row && (
         firstMapping >= mappings.length ||
         mappings[firstMapping + mappingsOffset] > row ||
         mappings[firstMapping + mappingsOffset + 1] > index
       )) {
-        firstMapping -= 5;
+        firstMapping -= 6;
       }
 
       // Seek to the first of any duplicate mappings
       const current = mappings[firstMapping + mappingsOffset + 1];
-      while (firstMapping > 0 && mappings[firstMapping - 5 + mappingsOffset] === row && mappings[firstMapping - 5 + mappingsOffset + 1] === current) {
-        firstMapping -= 5;
+      while (firstMapping > 0 && mappings[firstMapping - 6 + mappingsOffset] === row && mappings[firstMapping - 6 + mappingsOffset + 1] === current) {
+        firstMapping -= 6;
       }
 
       function columnToIndex(column) {
@@ -853,18 +871,18 @@
         let isLastMappingInLine = false;
 
         // Ignore subsequent duplicate mappings
-        if (map > 0 && mappings[map - 5 + mappingsOffset] === row && mappings[map - 5 + mappingsOffset + 1] === startIndex) {
+        if (map > 0 && mappings[map - 6 + mappingsOffset] === row && mappings[map - 6 + mappingsOffset + 1] === startIndex) {
           return null;
         }
 
         // Skip past any duplicate mappings after us so we can get to the next non-duplicate mapping
-        while (map + 5 < mappings.length && mappings[map + 5 + mappingsOffset] === row && mappings[map + 5 + mappingsOffset + 1] === startIndex) {
-          map += 5;
+        while (map + 6 < mappings.length && mappings[map + 6 + mappingsOffset] === row && mappings[map + 6 + mappingsOffset + 1] === startIndex) {
+          map += 6;
         }
 
         // Extend this mapping up to the next mapping if it's on the same line
-        if (map + 5 < mappings.length && mappings[map + 5 + mappingsOffset] === row) {
-          endIndex = mappings[map + 5 + mappingsOffset + 1];
+        if (map + 6 < mappings.length && mappings[map + 6 + mappingsOffset] === row) {
+          endIndex = mappings[map + 6 + mappingsOffset + 1];
         } else if (endIndex === startIndex) {
           isLastMappingInLine = true;
         }
@@ -1110,7 +1128,7 @@
           }
 
           // Draw the mappings
-          for (let map = firstMapping; map < mappings.length; map += 5) {
+          for (let map = firstMapping; map < mappings.length; map += 6) {
             if (mappings[map + mappingsOffset] !== row || mappings[map + mappingsOffset + 1] >= lastIndex) break;
             if (mappings[map + 2] === -1) continue;
 
