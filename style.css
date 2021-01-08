@@ -49,6 +49,21 @@ canvas {
   margin-right: 20px;
 }
 
+#theme {
+  position: fixed;
+  right: 0;
+  top: 0;
+  padding: 3px 5px;
+  z-index: 2;
+  cursor: pointer;
+}
+
+#theme svg {
+  display: block;
+  width: 25px;
+  height: 25px;
+}
+
 #statusBar {
   display: none;
   position: fixed;
@@ -66,6 +81,7 @@ canvas {
 #statusBar section {
   flex: 1;
   display: flex;
+  width: 50%;
 }
 
 #statusBar section:first-child {
@@ -76,6 +92,9 @@ canvas {
   vertical-align: middle;
   margin-right: 20px;
   opacity: 0.7;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #fileListParent {
@@ -120,6 +139,10 @@ h2 {
   display: none;
 }
 
+noscript {
+  display: block;
+}
+
 #errorText, noscript {
   margin-top: 50px;
   color: #f33;
@@ -140,14 +163,51 @@ h2 {
   margin-left: -50px;
 }
 
-body {
+/* ---------- Light colors ---------- */
+
+body:not([data-theme=dark]) {
   color: #222;
+  fill: #222;
+  stroke: #222;
   background: white;
 }
 
+body:not([data-theme=dark]) #theme-dark {
+  display: none;
+}
+
+/* ---------- Dark colors ---------- */
+
+body[data-theme=dark] {
+  color: #eee;
+  fill: #eee;
+  stroke: #eee;
+  background: #333;
+}
+
+body[data-theme=dark] #theme-light {
+  display: none;
+}
+
+body[data-theme=dark] #theme-dark {
+  display: block;
+}
+
+/* ---------- Dark colors without JavaScript ---------- */
+
 @media (prefers-color-scheme: dark) {
-  body {
+  body:not([data-theme=light]) {
     color: #eee;
+    fill: #eee;
+    stroke: #eee;
     background: #333;
+  }
+
+  body:not([data-theme=light]) #theme-light {
+    display: none;
+  }
+
+  body:not([data-theme=light]) #theme-dark {
+    display: block;
   }
 }
