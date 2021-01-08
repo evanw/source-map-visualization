@@ -105,8 +105,8 @@
       }
 
       else if (isProbablySourceMap(file0)) {
-        showLoadingError(`You cannot import just a source map by itself. ` +
-          `You must import both the source map and the JavaScript file that goes with it.`);
+        // Allow loading a source map without a generated file because why not
+        finishLoading('', code);
       }
 
       else {
