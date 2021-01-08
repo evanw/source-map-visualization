@@ -36,9 +36,12 @@ canvas {
 }
 
 #toolbar section {
-  padding-left: 8px;
   flex: 1;
   display: flex;
+}
+
+#toolbar section:first-child {
+  padding-left: 8px;
 }
 
 #toolbar section > * {
@@ -61,9 +64,12 @@ canvas {
 }
 
 #statusBar section {
-  padding-left: 8px;
   flex: 1;
   display: flex;
+}
+
+#statusBar section:first-child {
+  padding-left: 8px;
 }
 
 #statusBar section > * {

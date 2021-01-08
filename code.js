@@ -432,6 +432,7 @@
     }
 
     // Update the original text area when the source changes
+    const otherSource = index => sm.sources[index].name;
     originalTextArea = null;
     if (sm.sources.length > 0) {
       fileList.selectedIndex = 0;
@@ -442,6 +443,7 @@
           text: source.content,
           mappings: source.data,
           mappingsOffset: 3,
+          otherSource,
           bounds() {
             return {
               x: 0,
@@ -462,6 +464,7 @@
       text: js,
       mappings: sm.data,
       mappingsOffset: 0,
+      otherSource,
       bounds() {
         const x = (innerWidth >> 1) + ((splitterWidth + 1) >> 1);
         return {
@@ -669,7 +672,7 @@
     return { lines, longestLineInColumns };
   }
 
-  function createTextArea({ sourceIndex, text, mappings, mappingsOffset, bounds }) {
+  function createTextArea({ sourceIndex, text, mappings, mappingsOffset, otherSource, bounds }) {
     const shadowWidth = 16;
     const textPaddingX = 5;
     const textPaddingY = 1;
@@ -1186,6 +1189,16 @@
         }
 
         // Update the status bar
+        if (hoveredMapping) {
+          if (sourceIndex === null) {
+            status = `Line ${hoveredMapping.generatedLine + 1}, Offset ${hoveredMapping.generatedColumn}`;
+          } else {
+            status = `Line ${hoveredMapping.originalLine + 1}, Offset ${hoveredMapping.originalColumn}`;
+            if (hoveredMapping.originalSource !== sourceIndex) {
+              status += ` in ${otherSource(hoveredMapping.originalSource)}`;
+            }
+          }
+        }
         (sourceIndex === null ? generatedStatus : originalStatus).textContent = status;
 
         // Flush batches for the text
