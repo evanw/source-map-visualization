@@ -57,6 +57,9 @@
   const promptText = document.getElementById('promptText');
   const errorText = document.getElementById('errorText');
   const toolbar = document.getElementById('toolbar');
+  const statusBar = document.getElementById('statusBar');
+  const originalStatus = document.getElementById('originalStatus');
+  const generatedStatus = document.getElementById('generatedStatus');
 
   function isProbablySourceMap(file) {
     return file.name.endsWith('.map') || file.name.endsWith('.json');
@@ -411,11 +414,13 @@
   }
 
   const toolbarHeight = 32;
+  const statusBarHeight = 32;
 
   function finishLoading(js, map) {
     const startTime = Date.now();
     promptText.style.display = 'none';
     toolbar.style.display = 'flex';
+    statusBar.style.display = 'flex';
     const sm = parseSourceMap(map);
 
     // Populate the file picker
@@ -438,7 +443,12 @@
           mappings: source.data,
           mappingsOffset: 3,
           bounds() {
-            return { x: 0, y: toolbarHeight, width: (innerWidth >>> 1) - (splitterWidth >> 1), height: innerHeight - toolbarHeight };
+            return {
+              x: 0,
+              y: toolbarHeight,
+              width: (innerWidth >>> 1) - (splitterWidth >> 1),
+              height: innerHeight - toolbarHeight - statusBarHeight,
+            };
           },
         });
         isInvalid = true;
@@ -454,7 +464,12 @@
       mappingsOffset: 0,
       bounds() {
         const x = (innerWidth >> 1) + ((splitterWidth + 1) >> 1);
-        return { x, y: toolbarHeight, width: innerWidth - x, height: innerHeight - toolbarHeight };
+        return {
+          x,
+          y: toolbarHeight,
+          width: innerWidth - x,
+          height: innerHeight - toolbarHeight - statusBarHeight,
+        };
       },
     });
 
@@ -914,18 +929,18 @@
 
             if (row >= 0) {
               const flooredColumn = Math.floor(fractionalColumn);
-              const { index: roundedIndex, column: snappedRoundedColumn } = analyzeLine(row, roundedColumn, fractionalColumn, 'round');
-              const { index: flooredIndex, firstMapping, rangeOfMapping } = analyzeLine(row, flooredColumn, fractionalColumn, 'floor');
+              const { index: snappedRoundedIndex, column: snappedRoundedColumn } = analyzeLine(row, roundedColumn, fractionalColumn, 'round');
+              const { index: snappedFlooredIndex, firstMapping, rangeOfMapping } = analyzeLine(row, flooredColumn, fractionalColumn, 'floor');
 
               // Check to see if this nearest mapping is being hovered
               let mapping = null;
               const range = rangeOfMapping(firstMapping);
               if (range !== null && (
                 // If this is a zero-width mapping, hit-test with the caret
-                (range.isLastMappingInLine && range.startIndex === roundedIndex) ||
+                (range.isLastMappingInLine && range.startIndex === snappedRoundedIndex) ||
 
                 // Otherwise, determine the bounding-box and hit-test against that
-                (flooredIndex >= range.startIndex && flooredIndex < range.endIndex)
+                (snappedFlooredIndex >= range.startIndex && snappedFlooredIndex < range.endIndex)
               )) {
                 mapping = {
                   generatedLine: mappings[firstMapping],
@@ -936,7 +951,7 @@
                 };
               }
 
-              hover = { sourceIndex, row, column: snappedRoundedColumn, mapping };
+              hover = { sourceIndex, row, column: snappedRoundedColumn, index: snappedRoundedIndex, mapping };
             }
           }
         }
@@ -1143,6 +1158,8 @@
           }
         }
 
+        let status = '';
+
         // Draw the hover box for all text areas
         if (hoverBox) {
           const [rx, ry, rw, rh] = hoverBox.rect;
@@ -1158,14 +1175,18 @@
         }
 
         // Draw the hover caret, but only for this text area
-        if (false && hover && hover.sourceIndex === sourceIndex) {
+        else if (hover && hover.sourceIndex === sourceIndex) {
           const caretX = Math.round(x - scrollX + margin + textPaddingX + hover.column * columnWidth);
           const caretY = Math.round(y - scrollY + textPaddingY + hover.row * rowHeight);
           c.fillStyle = textColor;
           c.globalAlpha = 0.5;
           c.fillRect(caretX, caretY, 1, rowHeight);
           c.globalAlpha = 1;
+          status = `Line ${hover.row + 1}, Offset ${hover.index}`;
         }
+
+        // Update the status bar
+        (sourceIndex === null ? generatedStatus : originalStatus).textContent = status;
 
         // Flush batches for the text
         c.textBaseline = 'alphabetic';
@@ -1253,7 +1274,7 @@
 
     // Draw the splitter
     c.fillStyle = 'rgba(127, 127, 127, 0.2)';
-    c.fillRect((innerWidth >>> 1) - (splitterWidth >> 1), toolbarHeight, splitterWidth, innerHeight - toolbarHeight);
+    c.fillRect((innerWidth >>> 1) - (splitterWidth >> 1), toolbarHeight, splitterWidth, innerHeight - toolbarHeight - statusBarHeight);
 
     // Draw the arrow between the two hover areas
     if (hover && hover.mapping && originalTextArea.sourceIndex === hover.mapping.originalSource) {
@@ -1274,7 +1295,7 @@
 
         c.save();
         c.beginPath();
-        c.rect(0, toolbarHeight, innerWidth, innerHeight - toolbarHeight);
+        c.rect(0, toolbarHeight, innerWidth, innerHeight - toolbarHeight - statusBarHeight);
         c.clip();
 
         // Draw the curve
