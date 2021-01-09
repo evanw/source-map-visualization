@@ -55,7 +55,11 @@
   // Loading
 
   const promptText = document.getElementById('promptText');
+  const errorText = document.getElementById('errorText');
   const toolbar = document.getElementById('toolbar');
+  const statusBar = document.getElementById('statusBar');
+  const originalStatus = document.getElementById('originalStatus');
+  const generatedStatus = document.getElementById('generatedStatus');
 
   function isProbablySourceMap(file) {
     return file.name.endsWith('.map') || file.name.endsWith('.json');
@@ -70,16 +74,48 @@
     });
   }
 
+  function showLoadingError(text) {
+    promptText.style.display = 'block';
+    toolbar.style.display = 'none';
+    statusBar.style.display = 'none';
+    canvas.style.display = 'none';
+    errorText.style.display = 'block';
+    errorText.textContent = text;
+  }
+
   async function startLoading(files) {
     if (files.length === 1) {
-      const js = await loadFile(files[0]);
-      const match = /\/\/#\s*sourceMappingURL=data:(.*)/.exec(js);
+      const file0 = files[0];
+      const code = await loadFile(file0);
 
-      if (match) {
-        const comma = match[1].indexOf(',');
-        if (comma >= 0) {
-          finishLoading(js, atob(match[1].slice(comma + 1)));
-        }
+      // Check for both "//" and "/*" comments
+      let match = /\/\/#\s*sourceMappingURL=data:([^,]+),([^ ]+)/.exec(code);
+      if (!match) match = /\/\*#\s*sourceMappingURL=data:((?:[^,*]|\*[^/])+),((?:[^ *]|\*[^/])+)(?:[^*]|\*[^/])*\*\//.exec(code);
+
+      // Check for a non-empty data URL payload
+      if (match && match[2]) {
+        const parts = match[1].split(';');
+        const map = parts.indexOf('charset=utf-8') >= 0 ? decodeURIComponent(match[2]) : atob(match[2]);
+        finishLoading(code, map);
+      }
+
+      else if (match = /\/([/*])#\s*sourceMappingURL=data:/.exec(code)) {
+        showLoadingError(`Could not find any base64 data in the embedded "/${match[1]}# sourceMappingURL=" comment.`);
+      }
+
+      else if (match = /\/([/*])#\s*sourceMappingURL=/.exec(code)) {
+        showLoadingError(`The embedded "/${match[1]}# sourceMappingURL=" comment does not contain an inline source map. ` +
+          `You must import both the JavaScript file and the source map file that goes with it.`);
+      }
+
+      else if (isProbablySourceMap(file0)) {
+        // Allow loading a source map without a generated file because why not
+        finishLoading('', code);
+      }
+
+      else {
+        const c = file0.name.endsWith('ss') ? '*' : '/';
+        showLoadingError(`Failed to find an embedded "/${c}# sourceMappingURL=" comment in the imported file.`);
       }
     }
 
@@ -88,20 +124,28 @@
       const file1 = files[1];
 
       if (isProbablySourceMap(file0)) {
-        const jsPromise = loadFile(file1);
+        const codePromise = loadFile(file1);
         const mapPromise = loadFile(file0);
-        const js = await jsPromise;
+        const code = await codePromise;
         const map = await mapPromise;
-        finishLoading(js, map);
+        finishLoading(code, map);
       }
 
-      if (isProbablySourceMap(file1)) {
-        const jsPromise = loadFile(file0);
+      else if (isProbablySourceMap(file1)) {
+        const codePromise = loadFile(file0);
         const mapPromise = loadFile(file1);
-        const js = await jsPromise;
+        const code = await codePromise;
         const map = await mapPromise;
-        finishLoading(js, map);
+        finishLoading(code, map);
       }
+
+      else {
+        showLoadingError(`The source map file must end in either ".map" or ".json" to be detected.`);
+      }
+    }
+
+    else {
+      showLoadingError(`Please import either 1 or 2 files.`);
     }
   }
 
@@ -121,11 +165,14 @@
     let originalSource = 0;
     let originalLine = 0;
     let originalColumn = 0;
+    let originalName = 0;
     let needToSortGeneratedColumns = false;
     let i = 0;
 
     function decodeError(text) {
-      throw new Error(`Invalid VLQ data at index ${i}: ${text}`);
+      const error = `Invalid VLQ data at index ${i}: ${text}`;
+      showLoadingError(`The "mappings" field of the imported source map contains invalid data. ${error}.`);
+      throw new Error(error);
     }
 
     function decodeVLQ() {
@@ -162,13 +209,28 @@
         // The generated columns are very rarely out of order. In that case,
         // sort them with insertion since they are very likely almost ordered.
         if (needToSortGeneratedColumns) {
-          for (let j = generatedLineStart + 5; j < dataLength; j += 5) {
-            let genL = data[j], genC = data[j + 1], origS = data[j + 2], origL = data[j + 3], origC = data[j + 4];
-            let k = j - 5;
-            for (; k >= generatedLineStart && data[k + 1] > genC; k -= 5) {
-              data[k + 5] = data[k], data[k + 6] = data[k + 1], data[k + 7] = data[k + 2], data[k + 8] = data[k + 3], data[k + 9] = data[k + 4];
+          for (let j = generatedLineStart + 6; j < dataLength; j += 6) {
+            const genL = data[j];
+            const genC = data[j + 1];
+            const origS = data[j + 2];
+            const origL = data[j + 3];
+            const origC = data[j + 4];
+            const origN = data[j + 5];
+            let k = j - 6;
+            for (; k >= generatedLineStart && data[k + 1] > genC; k -= 6) {
+              data[k + 6] = data[k];
+              data[k + 7] = data[k + 1];
+              data[k + 8] = data[k + 2];
+              data[k + 9] = data[k + 3];
+              data[k + 10] = data[k + 4];
+              data[k + 11] = data[k + 5];
             }
-            data[k + 5] = genL, data[k + 6] = genC, data[k + 7] = origS, data[k + 8] = origL, data[k + 9] = origC;
+            data[k + 6] = genL;
+            data[k + 7] = genC;
+            data[k + 8] = origS;
+            data[k + 9] = origL;
+            data[k + 10] = origC;
+            data[k + 11] = origN;
           }
         }
 
@@ -176,6 +238,12 @@
         generatedColumn = 0;
         generatedLineStart = dataLength;
         needToSortGeneratedColumns = false;
+        i++;
+        continue;
+      }
+
+      // Ignore stray commas
+      if (c === 44 /* , */) {
         i++;
         continue;
       }
@@ -188,6 +256,7 @@
 
       // It's valid for a mapping to have 1, 4, or 5 variable-length fields
       let isOriginalSourceMissing = true;
+      let isOriginalNameMissing = true;
       if (i < n) {
         c = mappings.charCodeAt(i);
         if (c === 44 /* , */) {
@@ -210,13 +279,18 @@
           originalColumn += originalColumnDelta;
           if (originalColumn < 0) decodeError('Invalid original column');
 
-          // Ignore the optional name index
+          // Check for the optional name index
           if (i < n) {
             c = mappings.charCodeAt(i);
             if (c === 44 /* , */) {
               i++;
             } else if (c !== 59 /* ; */) {
-              decodeVLQ();
+              isOriginalNameMissing = false;
+
+              // Read the optional name index
+              const originalNameDelta = decodeVLQ();
+              originalName += originalNameDelta;
+              if (originalName < 0) decodeError('Invalid original name');
 
               // Handle the next character
               if (i < n) {
@@ -233,7 +307,7 @@
       }
 
       // Append the mapping to the typed array
-      if (dataLength + 5 > data.length) {
+      if (dataLength + 6 > data.length) {
         const newData = new Int32Array(data.length << 1);
         newData.set(data);
         data = newData;
@@ -249,7 +323,8 @@
         data[dataLength + 3] = originalLine;
         data[dataLength + 4] = originalColumn;
       }
-      dataLength += 5;
+      data[dataLength + 5] = isOriginalNameMissing ? -1 : originalName;
+      dataLength += 6;
     }
 
     return data.subarray(0, dataLength);
@@ -259,7 +334,7 @@
     let longestDataLength = 0;
 
     // Scatter the mappings to the individual sources
-    for (let i = 0, n = data.length; i < n; i += 5) {
+    for (let i = 0, n = data.length; i < n; i += 6) {
       const originalSource = data[i + 2];
       if (originalSource === -1) continue;
 
@@ -268,7 +343,7 @@
       let j = source.dataLength;
 
       // Append the mapping to the typed array
-      if (j + 5 > inverseData.length) {
+      if (j + 6 > inverseData.length) {
         const newLength = inverseData.length << 1;
         const newData = new Int32Array(newLength > 1024 ? newLength : 1024);
         newData.set(inverseData);
@@ -279,7 +354,8 @@
       inverseData[j + 2] = originalSource;
       inverseData[j + 3] = data[i + 3];
       inverseData[j + 4] = data[i + 4];
-      j += 5;
+      inverseData[j + 5] = data[i + 5];
+      j += 6;
       source.dataLength = j;
       if (j > longestDataLength) longestDataLength = j;
     }
@@ -305,8 +381,8 @@
 
     // From: https://en.wikipedia.org/wiki/Merge_sort
     function topDownSplitMerge(B, iBegin, iEnd, A) {
-      if (iEnd - iBegin <= 5) return;
-      const iMiddle = ((iEnd / 5 + iBegin / 5) >> 1) * 5;
+      if (iEnd - iBegin <= 6) return;
+      const iMiddle = ((iEnd / 6 + iBegin / 6) >> 1) * 6;
       topDownSplitMerge(A, iBegin, iMiddle, B);
       topDownSplitMerge(A, iMiddle, iEnd, B);
       topDownMerge(B, iBegin, iMiddle, iEnd, A);
@@ -315,7 +391,7 @@
     // From: https://en.wikipedia.org/wiki/Merge_sort
     function topDownMerge(A, iBegin, iMiddle, iEnd, B) {
       let i = iBegin, j = iMiddle;
-      for (let k = iBegin; k < iEnd; k += 5) {
+      for (let k = iBegin; k < iEnd; k += 6) {
         if (i < iMiddle && (j >= iEnd ||
           // Compare mappings first by original line (index 3) and then by original column (index 4)
           A[i + 3] < A[j + 3] ||
@@ -326,26 +402,45 @@
           B[k + 2] = A[i + 2];
           B[k + 3] = A[i + 3];
           B[k + 4] = A[i + 4];
-          i = i + 5;
+          B[k + 5] = A[i + 5];
+          i += 6;
         } else {
           B[k] = A[j];
           B[k + 1] = A[j + 1];
           B[k + 2] = A[j + 2];
           B[k + 3] = A[j + 3];
           B[k + 4] = A[j + 4];
-          j = j + 5;
+          B[k + 5] = A[j + 5];
+          j += 6;
         }
       }
     }
   }
 
   function parseSourceMap(json) {
-    json = JSON.parse(json);
-    if (json.version !== 3 || !(json.sources instanceof Array) || typeof json.mappings !== 'string') {
+    try {
+      json = JSON.parse(json);
+    } catch (e) {
+      showLoadingError(`The imported source map contains invalid JSON data: ${e && e.message || e}`);
+      throw e;
+    }
+
+    if (json.version !== 3) {
+      showLoadingError(`The imported source map is invalid. Expected the "version" field to contain the number 3.`);
       throw new Error('Invalid source map');
     }
 
-    const { sources, sourcesContent, mappings } = json;
+    if (!(json.sources instanceof Array) || json.sources.some(x => typeof x !== 'string')) {
+      showLoadingError(`The imported source map is invalid. Expected the "sources" field to be an array of strings.`);
+      throw new Error('Invalid source map');
+    }
+
+    if (typeof json.mappings !== 'string') {
+      showLoadingError(`The imported source map is invalid. Expected the "mappings" field to be a string.`);
+      throw new Error('Invalid source map');
+    }
+
+    const { sources, sourcesContent, names, mappings } = json;
     const emptyData = new Int32Array(0);
     for (let i = 0; i < sources.length; i++) {
       sources[i] = {
@@ -358,15 +453,18 @@
 
     const data = decodeMappings(mappings, sources.length);
     generateInverseMappings(sources, data);
-    return { sources, data };
+    return { sources, names, data };
   }
 
   const toolbarHeight = 32;
+  const statusBarHeight = 32;
 
-  function finishLoading(js, map) {
+  function finishLoading(code, map) {
     const startTime = Date.now();
     promptText.style.display = 'none';
     toolbar.style.display = 'flex';
+    statusBar.style.display = 'flex';
+    canvas.style.display = 'block';
     const sm = parseSourceMap(map);
 
     // Populate the file picker
@@ -378,6 +476,8 @@
     }
 
     // Update the original text area when the source changes
+    const otherSource = index => sm.sources[index].name;
+    const originalName = index => sm.names[index];
     originalTextArea = null;
     if (sm.sources.length > 0) {
       fileList.selectedIndex = 0;
@@ -388,8 +488,15 @@
           text: source.content,
           mappings: source.data,
           mappingsOffset: 3,
+          otherSource,
+          originalName,
           bounds() {
-            return { x: 0, y: toolbarHeight, width: (innerWidth >>> 1) - (splitterWidth >> 1), height: innerHeight - toolbarHeight };
+            return {
+              x: 0,
+              y: toolbarHeight,
+              width: (innerWidth >>> 1) - (splitterWidth >> 1),
+              height: innerHeight - toolbarHeight - statusBarHeight,
+            };
           },
         });
         isInvalid = true;
@@ -400,12 +507,19 @@
 
     generatedTextArea = createTextArea({
       sourceIndex: null,
-      text: js,
+      text: code,
       mappings: sm.data,
       mappingsOffset: 0,
+      otherSource,
+      originalName,
       bounds() {
         const x = (innerWidth >> 1) + ((splitterWidth + 1) >> 1);
-        return { x, y: toolbarHeight, width: innerWidth - x, height: innerHeight - toolbarHeight };
+        return {
+          x,
+          y: toolbarHeight,
+          width: innerWidth - x,
+          height: innerHeight - toolbarHeight - statusBarHeight,
+        };
       },
     });
 
@@ -605,7 +719,7 @@
     return { lines, longestLineInColumns };
   }
 
-  function createTextArea({ sourceIndex, text, mappings, mappingsOffset, bounds }) {
+  function createTextArea({ sourceIndex, text, mappings, mappingsOffset, otherSource, originalName, bounds }) {
     const shadowWidth = 16;
     const textPaddingX = 5;
     const textPaddingY = 1;
@@ -616,7 +730,7 @@
     let scrollX = 0;
     let scrollY = 0;
 
-    for (let i = 0, n = mappings.length; i < n; i += 5) {
+    for (let i = 0, n = mappings.length; i < n; i += 6) {
       let line = mappings[i + mappingsOffset];
       let column = mappings[i + mappingsOffset + 1];
       if (line < lines.length) {
@@ -722,30 +836,42 @@
       let firstMapping = 0;
       let mappingCount = mappings.length;
       while (mappingCount > 0) {
-        let step = ((mappingCount / 5) >> 1) * 5;
+        let step = ((mappingCount / 6) >> 1) * 6;
         let it = firstMapping + step;
         let mappingLine = mappings[it + mappingsOffset];
         if (mappingLine < row || (mappingLine === row && mappings[it + mappingsOffset + 1] < index)) {
-          firstMapping = it + 5;
-          mappingCount -= step + 5;
+          firstMapping = it + 6;
+          mappingCount -= step + 6;
         } else {
           mappingCount = step;
         }
       }
 
       // Back up to the previous mapping if we're at the end of the line or the mapping we found is after us
-      if (firstMapping > 0 && mappings[firstMapping - 5 + mappingsOffset] === row && (
+      if (firstMapping > 0 && mappings[firstMapping - 6 + mappingsOffset] === row && (
         firstMapping >= mappings.length ||
         mappings[firstMapping + mappingsOffset] > row ||
         mappings[firstMapping + mappingsOffset + 1] > index
       )) {
-        firstMapping -= 5;
+        firstMapping -= 6;
       }
 
       // Seek to the first of any duplicate mappings
       const current = mappings[firstMapping + mappingsOffset + 1];
-      while (firstMapping > 0 && mappings[firstMapping - 5 + mappingsOffset] === row && mappings[firstMapping - 5 + mappingsOffset + 1] === current) {
-        firstMapping -= 5;
+      while (firstMapping > 0 && mappings[firstMapping - 6 + mappingsOffset] === row && mappings[firstMapping - 6 + mappingsOffset + 1] === current) {
+        firstMapping -= 6;
+      }
+
+      function columnToIndex(column) {
+        // If there is no underlying line, just use one index per column
+        let index = column;
+        if (runs.length > 0) {
+          while (runs[nearbyRun].startColumn > column && nearbyRun > 0) nearbyRun--;
+          while (runs[nearbyRun].endColumn < column && nearbyRun + 1 < runs.length) nearbyRun++;
+          let run = runs[nearbyRun];
+          index = column === run.endColumn ? run.endIndex : run.endIndex + column - run.startColumn;
+        }
+        return index;
       }
 
       function indexToColumn(index) {
@@ -767,18 +893,18 @@
         let isLastMappingInLine = false;
 
         // Ignore subsequent duplicate mappings
-        if (map > 0 && mappings[map - 5 + mappingsOffset] === row && mappings[map - 5 + mappingsOffset + 1] === startIndex) {
+        if (map > 0 && mappings[map - 6 + mappingsOffset] === row && mappings[map - 6 + mappingsOffset + 1] === startIndex) {
           return null;
         }
 
         // Skip past any duplicate mappings after us so we can get to the next non-duplicate mapping
-        while (map + 5 < mappings.length && mappings[map + 5 + mappingsOffset] === row && mappings[map + 5 + mappingsOffset + 1] === startIndex) {
-          map += 5;
+        while (map + 6 < mappings.length && mappings[map + 6 + mappingsOffset] === row && mappings[map + 6 + mappingsOffset + 1] === startIndex) {
+          map += 6;
         }
 
         // Extend this mapping up to the next mapping if it's on the same line
-        if (map + 5 < mappings.length && mappings[map + 5 + mappingsOffset] === row) {
-          endIndex = mappings[map + 5 + mappingsOffset + 1];
+        if (map + 6 < mappings.length && mappings[map + 6 + mappingsOffset] === row) {
+          endIndex = mappings[map + 6 + mappingsOffset + 1];
         } else if (endIndex === startIndex) {
           isLastMappingInLine = true;
         }
@@ -798,6 +924,7 @@
         firstMapping,
         endOfLineIndex,
         endOfLineColumn,
+        columnToIndex,
         indexToColumn,
         rangeOfMapping,
       };
@@ -852,18 +979,18 @@
 
             if (row >= 0) {
               const flooredColumn = Math.floor(fractionalColumn);
-              const { index: roundedIndex, column: snappedRoundedColumn } = analyzeLine(row, roundedColumn, fractionalColumn, 'round');
-              const { index: flooredIndex, firstMapping, rangeOfMapping } = analyzeLine(row, flooredColumn, fractionalColumn, 'floor');
+              const { index: snappedRoundedIndex, column: snappedRoundedColumn } = analyzeLine(row, roundedColumn, fractionalColumn, 'round');
+              const { index: snappedFlooredIndex, firstMapping, rangeOfMapping } = analyzeLine(row, flooredColumn, fractionalColumn, 'floor');
 
               // Check to see if this nearest mapping is being hovered
               let mapping = null;
               const range = rangeOfMapping(firstMapping);
               if (range !== null && (
                 // If this is a zero-width mapping, hit-test with the caret
-                (range.isLastMappingInLine && range.startIndex === roundedIndex) ||
+                (range.isLastMappingInLine && range.startIndex === snappedRoundedIndex) ||
 
                 // Otherwise, determine the bounding-box and hit-test against that
-                (flooredIndex >= range.startIndex && flooredIndex < range.endIndex)
+                (snappedFlooredIndex >= range.startIndex && snappedFlooredIndex < range.endIndex)
               )) {
                 mapping = {
                   generatedLine: mappings[firstMapping],
@@ -871,10 +998,11 @@
                   originalSource: mappings[firstMapping + 2],
                   originalLine: mappings[firstMapping + 3],
                   originalColumn: mappings[firstMapping + 4],
+                  originalName: mappings[firstMapping + 5],
                 };
               }
 
-              hover = { sourceIndex, row, column: snappedRoundedColumn, mapping };
+              hover = { sourceIndex, row, column: snappedRoundedColumn, index: snappedRoundedIndex, mapping };
             }
           }
         }
@@ -974,7 +1102,7 @@
         const lastRow = Math.max(0, Math.ceil((scrollY - textPaddingY + height) / rowHeight));
 
         // Populate batches for the text
-        let hoverBox = null;
+        const hoverBoxes = [];
         const hoveredMapping = hover && hover.mapping;
         const mappingBatches = [];
         const badMappingBatches = [];
@@ -988,7 +1116,8 @@
           let dx = x - scrollX + margin + textPaddingX;
           let dy = y - scrollY + textPaddingY;
           dy += (row + 0.7) * rowHeight;
-          const { firstRun, runs, firstMapping, endOfLineColumn, rangeOfMapping } = analyzeLine(row, firstColumn, firstColumn, 'floor');
+          const { firstRun, runs, firstMapping, endOfLineColumn, rangeOfMapping, columnToIndex } = analyzeLine(row, firstColumn, firstColumn, 'floor');
+          const lastIndex = columnToIndex(lastColumn);
 
           // Don't draw any text if the whole line is offscreen
           if (firstRun < runs.length) {
@@ -1022,8 +1151,8 @@
           }
 
           // Draw the mappings
-          for (let map = firstMapping; map < mappings.length; map += 5) {
-            if (mappings[map + mappingsOffset] !== row || mappings[map + mappingsOffset + 1] >= lastColumn) break;
+          for (let map = firstMapping; map < mappings.length; map += 6) {
+            if (mappings[map + mappingsOffset] !== row || mappings[map + mappingsOffset + 1] >= lastIndex) break;
             if (mappings[map + 2] === -1) continue;
 
             // Get the bounds of this mapping, which may be empty if it's ignored
@@ -1031,20 +1160,34 @@
             if (range === null) continue;
 
             // Check if this mapping is hovered
-            const isHovered = hoveredMapping && (sourceIndex === null
-              ? mappings[map] === hoveredMapping.generatedLine &&
-              mappings[map + 1] === hoveredMapping.generatedColumn
-              : mappings[map + 2] === hoveredMapping.originalSource &&
-              mappings[map + 3] === hoveredMapping.originalLine &&
-              mappings[map + 4] === hoveredMapping.originalColumn
-            );
+            let isHovered = false;
+            if (hoveredMapping) {
+              const isGenerated = sourceIndex === null;
+              const hoverIsGenerated = hover.sourceIndex === null;
+              const matchesGenerated =
+                mappings[map] === hoveredMapping.generatedLine &&
+                mappings[map + 1] === hoveredMapping.generatedColumn;
+              const matchesOriginal =
+                mappings[map + 2] === hoveredMapping.originalSource &&
+                mappings[map + 3] === hoveredMapping.originalLine &&
+                mappings[map + 4] === hoveredMapping.originalColumn;
+              isHovered = hoveredMapping && (isGenerated !== hoverIsGenerated
+                // If this is on the opposite pane from the mouse, show all
+                // mappings that match the hovered mapping instead of showing
+                // an exact match.
+                ? matchesGenerated || matchesOriginal
+                // If this is on the same pane as the mouse, only show the exact
+                // mapping instead of showing everything that matches the target
+                // so hovering isn't confusing.
+                : isGenerated ? matchesGenerated : matchesOriginal);
+            }
 
             // Add a rectangle to that color's batch
             const { startColumn, endColumn } = range;
             const color = mappings[map + 3] % originalLineColors.length;
             const [x1, y1, x2, y2] = boxForRange(x, y, row, columnWidth, range);
             if (isHovered) {
-              hoverBox = { color, rect: [x1 - 2, y1 - 2, x2 - x1 + 4, y2 - y1 + 4] };
+              hoverBoxes.push({ color, rect: [x1 - 2, y1 - 2, x2 - x1 + 4, y2 - y1 + 4] });
             } else if (row >= lines.length || startColumn > endOfLineColumn) {
               badMappingBatches[color].push(x1, y1, x2 - x1, y2 - y1);
             } else if (endColumn > endOfLineColumn) {
@@ -1080,29 +1223,62 @@
           }
         }
 
+        let status = '';
+
         // Draw the hover box for all text areas
-        if (hoverBox) {
-          const [rx, ry, rw, rh] = hoverBox.rect;
-          c.shadowColor = originalLineColors[hoverBox.color].replace(' 0.3)', ' 1)');
+        if (hoverBoxes.length > 0) {
+          // Draw the glows
           c.shadowBlur = 20;
           c.fillStyle = 'black';
-          c.fillRect(rx - 1, ry - 1, rw + 2, rh + 2);
+          for (const { rect: [rx, ry, rw, rh], color } of hoverBoxes) {
+            c.shadowColor = originalLineColors[color].replace(' 0.3)', ' 1)');
+            c.fillRect(rx - 1, ry - 1, rw + 2, rh + 2);
+          }
           c.shadowColor = 'transparent';
-          c.clearRect(rx, ry, rw, rh);
+
+          // Hollow out the boxes and draw a border around each one
+          for (const { rect: [rx, ry, rw, rh] } of hoverBoxes) {
+            c.clearRect(rx, ry, rw, rh);
+          }
           c.strokeStyle = textColor;
           c.lineWidth = 2;
-          c.strokeRect(rx, ry, rw, rh);
+          for (const { rect: [rx, ry, rw, rh] } of hoverBoxes) {
+            c.strokeRect(rx, ry, rw, rh);
+          }
+
+          // Hollow out the boxes again. This is necessary to remove overlapping
+          // borders from adjacent boxes due to duplicate mappings.
+          for (const { rect: [rx, ry, rw, rh] } of hoverBoxes) {
+            c.clearRect(rx + 2, ry + 1, rw - 4, rh - 2);
+          }
         }
 
         // Draw the hover caret, but only for this text area
-        if (false && hover && hover.sourceIndex === sourceIndex) {
+        else if (hover && hover.sourceIndex === sourceIndex) {
           const caretX = Math.round(x - scrollX + margin + textPaddingX + hover.column * columnWidth);
           const caretY = Math.round(y - scrollY + textPaddingY + hover.row * rowHeight);
           c.fillStyle = textColor;
           c.globalAlpha = 0.5;
           c.fillRect(caretX, caretY, 1, rowHeight);
           c.globalAlpha = 1;
+          status = `Line ${hover.row + 1}, Offset ${hover.index}`;
         }
+
+        // Update the status bar
+        if (hoveredMapping) {
+          if (sourceIndex === null) {
+            status = `Line ${hoveredMapping.generatedLine + 1}, Offset ${hoveredMapping.generatedColumn}`;
+            if (hoveredMapping.originalName !== -1) {
+              status += `, Name ${originalName(hoveredMapping.originalName)}`;
+            }
+          } else {
+            status = `Line ${hoveredMapping.originalLine + 1}, Offset ${hoveredMapping.originalColumn}`;
+            if (hoveredMapping.originalSource !== sourceIndex) {
+              status += ` in ${otherSource(hoveredMapping.originalSource)}`;
+            }
+          }
+        }
+        (sourceIndex === null ? generatedStatus : originalStatus).textContent = status;
 
         // Flush batches for the text
         c.textBaseline = 'alphabetic';
@@ -1190,7 +1366,7 @@
 
     // Draw the splitter
     c.fillStyle = 'rgba(127, 127, 127, 0.2)';
-    c.fillRect((innerWidth >>> 1) - (splitterWidth >> 1), toolbarHeight, splitterWidth, innerHeight - toolbarHeight);
+    c.fillRect((innerWidth >>> 1) - (splitterWidth >> 1), toolbarHeight, splitterWidth, innerHeight - toolbarHeight - statusBarHeight);
 
     // Draw the arrow between the two hover areas
     if (hover && hover.mapping && originalTextArea.sourceIndex === hover.mapping.originalSource) {
@@ -1204,14 +1380,14 @@
         const generatedArrowHead = hover.sourceIndex === originalTextArea.sourceIndex;
         const [ox, oy, ow, oh] = originalHoverRect;
         const [gx, gy, , gh] = generatedHoverRect;
-        const x1 = Math.min(ox + ow, originalBounds.x + originalBounds.width) + (originalArrowHead ? 10 : 0);
-        const x2 = Math.max(gx, generatedBounds.x + margin) - (generatedArrowHead ? 10 : 0);
+        const x1 = Math.min(ox + ow, originalBounds.x + originalBounds.width) + (originalArrowHead ? 10 : 2);
+        const x2 = Math.max(gx, generatedBounds.x + margin) - (generatedArrowHead ? 10 : 2);
         const y1 = oy + oh / 2;
         const y2 = gy + gh / 2;
 
         c.save();
         c.beginPath();
-        c.rect(0, toolbarHeight, innerWidth, innerHeight - toolbarHeight);
+        c.rect(0, toolbarHeight, innerWidth, innerHeight - toolbarHeight - statusBarHeight);
         c.clip();
 
         // Draw the curve
@@ -1296,6 +1472,40 @@
     query.addEventListener('change', () => isInvalid = true);
   } catch (e) {
     query.addListener(() => isInvalid = true);
+  }
+
+  ////////////////////////////////////////////////////////////////////////////////
+  // Theme
+
+  function inverseSystemTheme() {
+    return darkMedia.matches ? 'light' : 'dark'
+  }
+
+  function updateTheme(theme) {
+    isInvalid = true
+    document.body.dataset.theme = theme
+    localStorage.setItem('theme', theme)
+  }
+
+  document.getElementById('theme').addEventListener('click', () => {
+    let theme = inverseSystemTheme()
+    updateTheme(document.body.dataset.theme === theme ? null : theme)
+  })
+
+  let darkMedia = matchMedia('(prefers-color-scheme: dark)')
+
+  function onDarkModeChange() {
+    if (document.body.dataset.theme !== inverseSystemTheme()) {
+      updateTheme(null)
+    }
+  }
+
+  try {
+    // Newer browsers
+    darkMedia.addEventListener('change', onDarkModeChange)
+  } catch (e) {
+    // Older browsers
+    darkMedia.addListener(onDarkModeChange)
   }
 })();
 
