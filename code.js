@@ -95,7 +95,7 @@
       // Check for a non-empty data URL payload
       if (match && match[2]) {
         const parts = match[1].split(';');
-        const map = parts.indexOf('charset=utf-8') >= 0 ? decodeURIComponent(match[2]) : atob(match[2]);
+        const map = parts.indexOf('base64') >= 0 ? atob(match[2]) : decodeURIComponent(match[2]);
         finishLoading(code, map);
       }
 
