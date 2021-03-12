@@ -600,7 +600,7 @@
       let raw = lines[line];
       let runs = [];
       let i = 0;
-      let n = raw.length;
+      let n = raw.length + 1; // Add 1 for the extra character at the end
       let column = 0;
 
       while (i < n) {
@@ -621,6 +621,16 @@
             column -= column % spacesPerTab;
             i++;
             whitespace = c1;
+            break;
+          }
+
+          // Draw each newline into its own run
+          if (c1 !== c1 /* end of line */) {
+            if (i > startIndex) break;
+            isSingleChunk = true;
+            column++;
+            i++;
+            whitespace = 0x0A /* newline */;
             break;
           }
 
@@ -701,14 +711,15 @@
         }
 
         runs.push({
-          isWhitespace: !!whitespace,
+          whitespace,
           startIndex, endIndex: i,
           startColumn, endColumn: column,
           isSingleChunk,
           text:
             !whitespace ? raw.slice(startIndex, i) :
               whitespace === 0x20 /* space */ ? '·'.repeat(i - startIndex) :
-                '→' /* tab */,
+                whitespace === 0x0A /* newline */ ? line + 1 === lines.length ? '∅' : '↵' :
+                  '→' /* tab */,
         });
       }
 
@@ -789,10 +800,15 @@
       let runCount = runs.length;
       let endOfLineIndex = 0;
       let endOfLineColumn = 0;
+      let beforeNewlineIndex = 0;
+      let hasTrailingNewline = false;
 
       if (runCount > 0) {
-        endOfLineIndex = runs[runCount - 1].endIndex;
-        endOfLineColumn = runs[runCount - 1].endColumn;
+        let lastRun = runs[runCount - 1];
+        endOfLineIndex = lastRun.endIndex;
+        endOfLineColumn = lastRun.endColumn;
+        beforeNewlineIndex = lastRun.startIndex;
+        hasTrailingNewline = lastRun.whitespace === 0x0A /* newline */;
 
         // Binary search to find the first run
         firstRun = 0;
@@ -889,7 +905,10 @@
       function rangeOfMapping(map) {
         if (mappings[map + mappingsOffset] !== row) return null;
         let startIndex = mappings[map + mappingsOffset + 1];
-        let endIndex = startIndex > endOfLineIndex ? startIndex : endOfLineIndex;
+        let endIndex =
+          startIndex > endOfLineIndex ? startIndex :
+            hasTrailingNewline && startIndex < beforeNewlineIndex ? beforeNewlineIndex :
+              endOfLineIndex;
         let isLastMappingInLine = false;
 
         // Ignore subsequent duplicate mappings
@@ -1130,7 +1149,7 @@
             // Draw the runs
             let currentColumn = firstColumn;
             for (let run = firstRun; run <= lastRun; run++) {
-              let { isWhitespace, text, startColumn, endColumn, isSingleChunk } = runs[run];
+              let { whitespace, text, startColumn, endColumn, isSingleChunk } = runs[run];
 
               // Limit the run to the visible columns (but only for ASCII runs)
               if (!isSingleChunk) {
@@ -1145,7 +1164,7 @@
               }
 
               // Draw whitespace in a separate batch
-              (isWhitespace ? whitespaceBatch : textBatch).push(text, dx + startColumn * columnWidth, dy);
+              (whitespace ? whitespaceBatch : textBatch).push(text, dx + startColumn * columnWidth, dy);
               currentColumn = endColumn;
             }
           }
