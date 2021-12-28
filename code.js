@@ -480,7 +480,6 @@
     const originalName = index => sm.names[index];
     originalTextArea = null;
     if (sm.sources.length > 0) {
-      fileList.selectedIndex = 0;
       const updateOriginalSource = () => {
         const source = sm.sources[fileList.selectedIndex];
         originalTextArea = createTextArea({
@@ -503,7 +502,13 @@
       };
       fileList.onchange = updateOriginalSource;
       updateOriginalSource();
+    } else {
+      const option = document.createElement('option');
+      option.textContent = `(no original code)`;
+      option.disabled = true;
+      fileList.appendChild(option);
     }
+    fileList.selectedIndex = 0;
 
     generatedTextArea = createTextArea({
       sourceIndex: null,
@@ -1377,10 +1382,10 @@
     isInvalid = false;
 
     c.clearRect(0, 0, innerWidth, innerHeight);
-    if (!originalTextArea || !generatedTextArea) return;
+    if (!generatedTextArea) return;
 
     const bodyStyle = getComputedStyle(document.body);
-    originalTextArea.draw(bodyStyle);
+    if (originalTextArea) originalTextArea.draw(bodyStyle);
     generatedTextArea.draw(bodyStyle);
 
     // Draw the splitter
@@ -1388,7 +1393,7 @@
     c.fillRect((innerWidth >>> 1) - (splitterWidth >> 1), toolbarHeight, splitterWidth, innerHeight - toolbarHeight - statusBarHeight);
 
     // Draw the arrow between the two hover areas
-    if (hover && hover.mapping && originalTextArea.sourceIndex === hover.mapping.originalSource) {
+    if (hover && hover.mapping && originalTextArea && originalTextArea.sourceIndex === hover.mapping.originalSource) {
       const originalHoverRect = originalTextArea.getHoverRect();
       const generatedHoverRect = generatedTextArea.getHoverRect();
       if (originalHoverRect && generatedHoverRect) {
