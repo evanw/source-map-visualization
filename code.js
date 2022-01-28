@@ -465,6 +465,7 @@
     toolbar.style.display = 'flex';
     statusBar.style.display = 'flex';
     canvas.style.display = 'block';
+    updateHash(code, map);
     const sm = parseSourceMap(map);
 
     // Populate the file picker
@@ -1530,6 +1531,28 @@
   } catch (e) {
     // Older browsers
     darkMedia.addListener(onDarkModeChange)
+  }
+
+  ////////////////////////////////////////////////////////////////////////////////
+  // Shareable URLs
+
+  const hash = location.hash;
+  if (hash.length > 1) {
+    loadFromHash(hash);
+  }
+
+  function loadFromHash(hash) {
+    try {
+      const { code, map } = JSON.parse(atob(hash.slice(1)));
+      finishLoading(code, map);
+    } catch (e) {}
+  }
+
+  function updateHash(code, map) {
+    try {
+      const data = btoa(JSON.stringify({ code, map }));
+      history.replaceState({}, '', '#' + data);
+    } catch (e) {}
   }
 })();
 
