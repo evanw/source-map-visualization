@@ -484,7 +484,7 @@
     }
 
     // Update the original text area when the source changes
-    const otherSource = index => sm.sources[index].name;
+    const otherSource = index => index === -1 ? 'unmapped' : sm.sources[index].name;
     const originalName = index => sm.names[index];
     originalTextArea = null;
     if (sm.sources.length > 0) {
