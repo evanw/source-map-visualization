@@ -54,6 +54,9 @@
   ////////////////////////////////////////////////////////////////////////////////
   // Loading
 
+  const utf8ToUTF16 = x => decodeURIComponent(escape(x));
+  const utf16ToUTF8 = x => unescape(encodeURIComponent(x));
+
   const promptText = document.getElementById('promptText');
   const errorText = document.getElementById('errorText');
   const toolbar = document.getElementById('toolbar');
@@ -102,7 +105,7 @@
       // Check for a non-empty data URL payload
       if (match && match[2]) {
         const parts = match[1].split(';');
-        const map = parts.indexOf('base64') >= 0 ? atob(match[2]) : decodeURIComponent(match[2]);
+        const map = parts.indexOf('base64') >= 0 ? utf8ToUTF16(atob(match[2])) : decodeURIComponent(match[2]);
         finishLoading(code, map);
       }
 
@@ -1542,9 +1545,6 @@
 
   ////////////////////////////////////////////////////////////////////////////////
   // Shareable URLs
-
-  const utf8ToUTF16 = x => decodeURIComponent(escape(x));
-  const utf16ToUTF8 = x => unescape(encodeURIComponent(x));
 
   function loadFromHash() {
     try {
