@@ -484,7 +484,7 @@
     }
 
     // Update the original text area when the source changes
-    const otherSource = index => index === -1 ? 'unmapped' : sm.sources[index].name;
+    const otherSource = index => index === -1 ? null : sm.sources[index].name;
     const originalName = index => sm.names[index];
     originalTextArea = null;
     if (sm.sources.length > 0) {
@@ -1297,7 +1297,7 @@
         }
 
         // Update the status bar
-        if (hoveredMapping) {
+        if (hoveredMapping && hoveredMapping.originalColumn !== -1) {
           if (sourceIndex === null) {
             status = `Line ${hoveredMapping.generatedLine + 1}, Offset ${hoveredMapping.generatedColumn}`;
             if (hoveredMapping.originalName !== -1) {
