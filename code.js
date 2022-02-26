@@ -51,6 +51,21 @@
     finishLoading(exampleJS, exampleMap);
   };
 
+  document.body.focus()
+
+  document.body.addEventListener('paste', async (event) => {
+    event.preventDefault()
+    const text = event.clipboardData.getData('text/plain')
+    const match = /\/\/#[ ]*sourceMappingURL=/.exec(text)
+    if (match == null) return
+    const index = match.index + match[0].length
+    const url = text.substring(index)
+    const code = text.substring(0, match.index)
+    const map = await (await fetch(new URL(url))).text()
+
+    finishLoading(code, map)
+  })
+
   ////////////////////////////////////////////////////////////////////////////////
   // Loading
 
