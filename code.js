@@ -85,48 +85,53 @@
   }
 
   function showLoadingError(text) {
-    promptText.style.display = 'block';
-    toolbar.style.display = 'none';
-    statusBar.style.display = 'none';
-    canvas.style.display = 'none';
+    resetLoadingState();
     errorText.style.display = 'block';
     errorText.textContent = text;
+
+    // Push an empty hash since the state has been cleared
+    if (location.hash !== '') {
+      try {
+        history.pushState({}, '', location.pathname);
+      } catch (e) {
+      }
+    }
+  }
+
+  async function finishLoadingCodeWithEmbeddedSourceMap(code, file) {
+    // Check for both "//" and "/*" comments
+    let match = /\/(\/)[#@] *sourceMappingURL=([^\s]+)/.exec(code);
+    if (!match) match = /\/(\*)[#@] *sourceMappingURL=((?:[^\s*]|\*[^/])+)(?:[^*]|\*[^/])*\*\//.exec(code);
+
+    // Check for a non-empty data URL payload
+    if (match && match[2]) {
+      let map;
+      try {
+        // Use "new URL" to ensure that the URL has a protocol (e.g. "data:" or "https:")
+        map = await fetch(new URL(match[2])).then(r => r.text());
+      } catch (e) {
+        showLoadingError(`Failed to parse the URL in the "/${match[1]}# sourceMappingURL=" comment: ${e && e.message || e}`);
+        return;
+      }
+      finishLoading(code, map);
+    }
+
+    else if (file && isProbablySourceMap(file)) {
+      // Allow loading a source map without a generated file because why not
+      finishLoading('', code);
+    }
+
+    else {
+      const c = file && file.name.endsWith('ss') ? '*' : '/';
+      showLoadingError(`Failed to find an embedded "/${c}# sourceMappingURL=" comment in the ${file ? 'imported file' : 'pasted text'}.`);
+    }
   }
 
   async function startLoading(files) {
     if (files.length === 1) {
       const file0 = files[0];
       const code = await loadFile(file0);
-
-      // Check for both "//" and "/*" comments
-      let match = /\/\/#\s*sourceMappingURL=data:([^,]+),([^ ]+)/.exec(code);
-      if (!match) match = /\/\*#\s*sourceMappingURL=data:((?:[^,*]|\*[^/])+),((?:[^ *]|\*[^/])+)(?:[^*]|\*[^/])*\*\//.exec(code);
-
-      // Check for a non-empty data URL payload
-      if (match && match[2]) {
-        const parts = match[1].split(';');
-        const map = parts.indexOf('base64') >= 0 ? utf8ToUTF16(atob(match[2])) : decodeURIComponent(match[2]);
-        finishLoading(code, map);
-      }
-
-      else if (match = /\/([/*])#\s*sourceMappingURL=data:/.exec(code)) {
-        showLoadingError(`Could not find any base64 data in the embedded "/${match[1]}# sourceMappingURL=" comment.`);
-      }
-
-      else if (match = /\/([/*])#\s*sourceMappingURL=/.exec(code)) {
-        showLoadingError(`The embedded "/${match[1]}# sourceMappingURL=" comment does not contain an inline source map. ` +
-          `You must import both the JavaScript file and the source map file that goes with it.`);
-      }
-
-      else if (isProbablySourceMap(file0)) {
-        // Allow loading a source map without a generated file because why not
-        finishLoading('', code);
-      }
-
-      else {
-        const c = file0.name.endsWith('ss') ? '*' : '/';
-        showLoadingError(`Failed to find an embedded "/${c}# sourceMappingURL=" comment in the imported file.`);
-      }
+      finishLoadingCodeWithEmbeddedSourceMap(code, file0);
     }
 
     else if (files.length === 2) {
@@ -158,6 +163,12 @@
       showLoadingError(`Please import either 1 or 2 files.`);
     }
   }
+
+  document.body.addEventListener('paste', e => {
+    e.preventDefault();
+    const code = e.clipboardData.getData('text/plain');
+    finishLoadingCodeWithEmbeddedSourceMap(code, null);
+  });
 
   // Accelerate VLQ decoding with a lookup table
   const vlqTable = new Uint8Array(128);
