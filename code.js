@@ -1154,6 +1154,7 @@
         const badMappingBatches = [];
         const whitespaceBatch = [];
         const textBatch = [];
+        let hoveredName = null;
         for (let i = 0; i < originalLineColors.length; i++) {
           mappingBatches.push([]);
           badMappingBatches.push([]);
@@ -1204,6 +1205,9 @@
             // Get the bounds of this mapping, which may be empty if it's ignored
             const range = rangeOfMapping(map);
             if (range === null) continue;
+            const { startColumn, endColumn } = range;
+            const color = mappings[map + 3] % originalLineColors.length;
+            const [x1, y1, x2, y2] = boxForRange(x, y, row, columnWidth, range);
 
             // Check if this mapping is hovered
             let isHovered = false;
@@ -1226,12 +1230,16 @@
                 // mapping instead of showing everything that matches the target
                 // so hovering isn't confusing.
                 : isGenerated ? matchesGenerated : matchesOriginal);
+              if (isGenerated && matchesGenerated && hoveredMapping.originalName !== -1) {
+                hoveredName = {
+                  text: originalName(hoveredMapping.originalName),
+                  x: Math.round(x - scrollX + margin + textPaddingX + range.startColumn * columnWidth - 2),
+                  y: Math.round(y + textPaddingY - scrollY + (row + 1.2) * rowHeight),
+                };
+              }
             }
 
             // Add a rectangle to that color's batch
-            const { startColumn, endColumn } = range;
-            const color = mappings[map + 3] % originalLineColors.length;
-            const [x1, y1, x2, y2] = boxForRange(x, y, row, columnWidth, range);
             if (isHovered) {
               hoverBoxes.push({ color, rect: [x1 - 2, y1 - 2, x2 - x1 + 4, y2 - y1 + 4] });
             } else if (row >= lines.length || startColumn > endOfLineColumn) {
@@ -1314,9 +1322,6 @@
         if (hoveredMapping && hoveredMapping.originalColumn !== -1) {
           if (sourceIndex === null) {
             status = `Line ${hoveredMapping.generatedLine + 1}, Offset ${hoveredMapping.generatedColumn}`;
-            if (hoveredMapping.originalName !== -1) {
-              status += `, Name ${originalName(hoveredMapping.originalName)}`;
-            }
           } else {
             status = `Line ${hoveredMapping.originalLine + 1}, Offset ${hoveredMapping.originalColumn}`;
             if (hoveredMapping.originalSource !== sourceIndex) {
@@ -1340,6 +1345,28 @@
           for (let j = 0; j < textBatch.length; j += 3) {
             c.fillText(textBatch[j], textBatch[j + 1], textBatch[j + 2]);
           }
+        }
+
+        // Draw the original name tooltip
+        if (hoveredName) {
+          const { text, x, y } = hoveredName;
+          const w = 2 * textPaddingX + c.measureText(text).width;
+          const h = rowHeight;
+          const r = 4;
+          c.beginPath();
+          c.arc(x + r, y + r, r, - Math.PI, -Math.PI / 2, false);
+          c.arc(x + w - r, y + r, r, -Math.PI / 2, 0, false);
+          c.arc(x + w - r, y + h - r, r, 0, Math.PI / 2, false);
+          c.arc(x + r, y + h - r, r, Math.PI / 2, Math.PI, false);
+          c.save();
+          c.shadowColor = 'rgba(0, 0, 0, 0.5)';
+          c.shadowOffsetY = 3;
+          c.shadowBlur = 10;
+          c.fillStyle = textColor;
+          c.fill();
+          c.restore();
+          c.fillStyle = backgroundColor;
+          c.fillText(text, x + textPaddingX, y + 0.7 * rowHeight);
         }
 
         // Draw the margin shadow
