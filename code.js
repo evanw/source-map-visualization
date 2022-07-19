@@ -176,7 +176,7 @@
   for (let i = 0; i < vlqTable.length; i++) vlqTable[i] = 0xFF;
   for (let i = 0; i < vlqChars.length; i++) vlqTable[vlqChars.charCodeAt(i)] = i;
 
-  function decodeMappings(mappings, sourcesCount) {
+  function decodeMappings(mappings, sourcesCount, namesCount) {
     const n = mappings.length;
     let data = new Int32Array(1024);
     let dataLength = 0;
@@ -203,11 +203,11 @@
       // Scan over the input
       while (true) {
         // Read a byte
-        if (i >= mappings.length) decodeError('Expected extra data');
+        if (i >= mappings.length) decodeError('Unexpected early end of mapping data');
         const c = mappings.charCodeAt(i);
-        if ((c & 0x7F) !== c) decodeError('Invalid character');
+        if ((c & 0x7F) !== c) decodeError(`Invalid mapping character: ${JSON.stringify(String.fromCharCode(c))}`);
         const index = vlqTable[c & 0x7F];
-        if (index === 0xFF) decodeError('Invalid character');
+        if (index === 0xFF) decodeError(`Invalid mapping character: ${JSON.stringify(String.fromCharCode(c))}`);
         i++;
 
         // Decode the byte
@@ -273,7 +273,7 @@
       const generatedColumnDelta = decodeVLQ();
       if (generatedColumnDelta < 0) needToSortGeneratedColumns = true;
       generatedColumn += generatedColumnDelta;
-      if (generatedColumn < 0) decodeError('Invalid generated column');
+      if (generatedColumn < 0) decodeError(`Invalid generated column: ${generatedColumn}`);
 
       // It's valid for a mapping to have 1, 4, or 5 variable-length fields
       let isOriginalSourceMissing = true;
@@ -288,17 +288,17 @@
           // Read the original source
           const originalSourceDelta = decodeVLQ();
           originalSource += originalSourceDelta;
-          if (originalSource < 0 || originalSource >= sourcesCount) decodeError('Invalid original source');
+          if (originalSource < 0 || originalSource >= sourcesCount) decodeError(`Original source index ${originalSource} is invalid (there are ${sourcesCount} sources)`);
 
           // Read the original line
           const originalLineDelta = decodeVLQ();
           originalLine += originalLineDelta;
-          if (originalLine < 0) decodeError('Invalid original line');
+          if (originalLine < 0) decodeError(`Invalid original line: ${originalLine}`);
 
           // Read the original column
           const originalColumnDelta = decodeVLQ();
           originalColumn += originalColumnDelta;
-          if (originalColumn < 0) decodeError('Invalid original column');
+          if (originalColumn < 0) decodeError(`Invalid original column: ${originalColumn}`);
 
           // Check for the optional name index
           if (i < n) {
@@ -311,7 +311,7 @@
               // Read the optional name index
               const originalNameDelta = decodeVLQ();
               originalName += originalNameDelta;
-              if (originalName < 0) decodeError('Invalid original name');
+              if (originalName < 0 || originalName >= namesCount) decodeError(`Original name index ${originalName} is invalid (there are ${namesCount} names)`);
 
               // Handle the next character
               if (i < n) {
@@ -319,7 +319,7 @@
                 if (c === 44 /* , */) {
                   i++;
                 } else if (c !== 59 /* ; */) {
-                  decodeError('Invalid character after mapping');
+                  decodeError(`Invalid character after mapping: ${JSON.stringify(String.fromCharCode(c))}`);
                 }
               }
             }
@@ -472,7 +472,7 @@
       };
     }
 
-    const data = decodeMappings(mappings, sources.length);
+    const data = decodeMappings(mappings, sources.length, names.length);
     generateInverseMappings(sources, data);
     return { sources, names, data };
   }
