@@ -403,6 +403,19 @@
     // From: https://en.wikipedia.org/wiki/Merge_sort
     function topDownSplitMerge(B, iBegin, iEnd, A) {
       if (iEnd - iBegin <= 6) return;
+
+      // Optimization: Don't do merge sort if it's already sorted
+      let isAlreadySorted = true;
+      for (let i = iBegin + 3, j = i + 6; j < iEnd; i = j, j += 6) {
+        // Compare mappings first by original line (index 3) and then by original column (index 4)
+        if (A[i] < A[j] || (A[i] === A[j] && A[i + 1] <= A[j + 1])) continue;
+        isAlreadySorted = false;
+        break;
+      }
+      if (isAlreadySorted) {
+        return;
+      }
+
       const iMiddle = ((iEnd / 6 + iBegin / 6) >> 1) * 6;
       topDownSplitMerge(A, iBegin, iMiddle, B);
       topDownSplitMerge(A, iMiddle, iEnd, B);
