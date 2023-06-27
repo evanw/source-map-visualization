@@ -451,6 +451,92 @@
       throw new Error('Invalid source map');
     }
 
+    if (json.sections instanceof Array) {
+      const sections = json.sections;
+      const decodedSections = [];
+      let totalDataLength = 0;
+
+      for (let i = 0; i < sections.length; i++) {
+        const { offset: { line, column }, map } = sections[i];
+        if (typeof line !== 'number' || typeof column !== 'number') {
+          showLoadingError(`The imported source map is invalid. Expected the "offset" field for section ${i} to have a line and column.`);
+          throw new Error('Invalid source map');
+        }
+
+        if (!map) {
+          showLoadingError(`The imported source map is unsupported. Section ${i} does not contain a "map" field.`);
+          throw new Error('Invalid source map');
+        }
+
+        if (map.version !== 3) {
+          showLoadingError(`The imported source map is invalid. Expected the "version" field for section ${i} to contain the number 3.`);
+          throw new Error('Invalid source map');
+        }
+
+        if (!(map.sources instanceof Array) || map.sources.some(x => typeof x !== 'string')) {
+          showLoadingError(`The imported source map is invalid. Expected the "sources" field for section ${i} to be an array of strings.`);
+          throw new Error('Invalid source map');
+        }
+
+        if (typeof map.mappings !== 'string') {
+          showLoadingError(`The imported source map is invalid. Expected the "mappings" field for section ${i} to be a string.`);
+          throw new Error('Invalid source map');
+        }
+
+        const { sources, sourcesContent, names, mappings } = map;
+        const emptyData = new Int32Array(0);
+        for (let i = 0; i < sources.length; i++) {
+          sources[i] = {
+            name: sources[i],
+            content: sourcesContent && sourcesContent[i] || '',
+            data: emptyData,
+            dataLength: 0,
+          };
+        }
+
+        const data = decodeMappings(mappings, sources.length, names.length);
+        decodedSections.push({ offset: { line, column }, sources, names, data });
+        totalDataLength += data.length;
+      }
+
+      decodedSections.sort((a, b) => {
+        if (a.offset.line < b.offset.line) return -1;
+        if (a.offset.line > b.offset.line) return 1;
+        if (a.offset.column < b.offset.column) return -1;
+        if (a.offset.column > b.offset.column) return 1;
+        return 0;
+      });
+
+      const mergedData = new Int32Array(totalDataLength);
+      const mergedSources = [];
+      const mergedNames = [];
+      let dataOffset = 0;
+
+      for (const { offset: { line, column }, sources, names, data } of decodedSections) {
+        const sourcesOffset = mergedSources.length;
+        const nameOffset = mergedNames.length;
+
+        for (let i = 0, n = data.length; i < n; i += 6) {
+          if (data[i] === 0) data[i + 1] += column;
+          data[i] += line;
+          if (data[i + 2] !== -1) data[i + 2] += sourcesOffset;
+          if (data[i + 5] !== -1) data[i + 5] += nameOffset;
+        }
+
+        mergedData.set(data, dataOffset);
+        for (const source of sources) mergedSources.push(source);
+        for (const name of names) mergedNames.push(name);
+        dataOffset += data.length;
+      }
+
+      generateInverseMappings(mergedSources, mergedData);
+      return {
+        sources: mergedSources,
+        names: mergedNames,
+        data: mergedData,
+      };
+    }
+
     if (!(json.sources instanceof Array) || json.sources.some(x => typeof x !== 'string')) {
       showLoadingError(`The imported source map is invalid. Expected the "sources" field to be an array of strings.`);
       throw new Error('Invalid source map');
