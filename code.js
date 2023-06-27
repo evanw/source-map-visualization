@@ -718,12 +718,20 @@
     c.font = monospaceFont;
     const spaceWidth = c.measureText(' ').width;
     const spacesPerTab = 2;
-    const lines = text.split(/\r\n|\r|\n/g);
+    const parts = text.split(/(\r\n|\r|\n)/g);
     const unicodeWidthCache = new Map();
+    const lines = [];
     let longestLineInColumns = 0;
+    let lineStartOffset = 0;
 
-    for (let line = 0; line < lines.length; line++) {
-      let raw = lines[line];
+    for (let part = 0; part < parts.length; part++) {
+      let raw = parts[part];
+      if (part & 1) {
+        // Accumulate the length of the newline (CRLF uses two code units)
+        lineStartOffset += raw.length;
+        continue;
+      }
+
       let runs = [];
       let i = 0;
       let n = raw.length + 1; // Add 1 for the extra character at the end
@@ -841,16 +849,13 @@
           startIndex, endIndex: i,
           startColumn, endColumn: column,
           isSingleChunk,
-          text:
-            !whitespace ? raw.slice(startIndex, i) :
-              whitespace === 0x20 /* space */ ? '·'.repeat(i - startIndex) :
-                whitespace === 0x0A /* newline */ ? line + 1 === lines.length ? '∅' : '↵' :
-                  '→' /* tab */,
+          text: lineStartOffset, // The string for this run will be lazily-generated using this offset
         });
       }
 
-      lines[line] = { raw, runs, endIndex: i, endColumn: column };
+      lines.push({ raw, runs, endIndex: i, endColumn: column });
       longestLineInColumns = Math.max(longestLineInColumns, column);
+      lineStartOffset += raw.length;
     }
 
     return { lines, longestLineInColumns };
@@ -1275,23 +1280,35 @@
 
             // Draw the runs
             let currentColumn = firstColumn;
-            for (let run = firstRun; run <= lastRun; run++) {
-              let { whitespace, text, startColumn, endColumn, isSingleChunk } = runs[run];
+            for (let i = firstRun; i <= lastRun; i++) {
+              const run = runs[i];
+              let { whitespace, text: runText, startColumn, endColumn } = run;
+
+              // Lazily-generate text for runs to improve performance. When
+              // this happens, the run text is the code unit offset of the
+              // start of the line containing this run.
+              if (typeof runText === 'number') {
+                runText = run.text =
+                  !whitespace ? text.slice(runText + run.startIndex, runText + run.endIndex) :
+                    whitespace === 0x20 /* space */ ? '·'.repeat(run.endIndex - run.startIndex) :
+                      whitespace === 0x0A /* newline */ ? runText + run.startIndex === text.length ? '∅' : '↵' :
+                        '→' /* tab */;
+              }
 
               // Limit the run to the visible columns (but only for ASCII runs)
-              if (!isSingleChunk) {
+              if (!run.isSingleChunk) {
                 if (startColumn < currentColumn) {
-                  text = text.slice(currentColumn - startColumn);
+                  runText = runText.slice(currentColumn - startColumn);
                   startColumn = currentColumn;
                 }
                 if (endColumn > lastColumn) {
-                  text = text.slice(0, lastColumn - startColumn);
+                  runText = runText.slice(0, lastColumn - startColumn);
                   endColumn = lastColumn;
                 }
               }
 
               // Draw whitespace in a separate batch
-              (whitespace ? whitespaceBatch : textBatch).push(text, dx + startColumn * columnWidth, dy);
+              (whitespace ? whitespaceBatch : textBatch).push(runText, dx + startColumn * columnWidth, dy);
               currentColumn = endColumn;
             }
           }
