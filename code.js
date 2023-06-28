@@ -764,6 +764,24 @@
   let generatedTextArea;
   let hover = null;
 
+  const wrapCheckbox = document.getElementById('wrap');
+  let wrap = true;
+  try {
+    wrap = localStorage.getItem('wrap') !== 'false';
+  } catch (e) {
+  }
+  wrapCheckbox.checked = wrap;
+  wrapCheckbox.onchange = () => {
+    wrap = wrapCheckbox.checked;
+    try {
+      localStorage.setItem('wrap', wrap);
+    } catch (e) {
+    }
+    if (originalTextArea) originalTextArea.updateAfterWrapChange();
+    if (generatedTextArea) generatedTextArea.updateAfterWrapChange();
+    isInvalid = true;
+  };
+
   async function splitTextIntoLinesAndRuns(text, progress) {
     c.font = monospaceFont;
     const spaceWidth = c.measureText(' ').width;
@@ -772,6 +790,7 @@
     const unicodeWidthCache = new Map();
     const lines = [];
     const progressChunkSize = 1 << 20;
+    let longestColumnForLine = new Int32Array(1024);
     let runData = new Int32Array(1024);
     let runDataLength = 0;
     let prevProgressPoint = 0;
@@ -920,6 +939,14 @@
         runDataLength += 5;
       }
 
+      const lineIndex = lines.length;
+      if (lineIndex >= longestColumnForLine.length) {
+        const newData = new Int32Array(longestColumnForLine.length << 1);
+        newData.set(longestColumnForLine);
+        longestColumnForLine = newData;
+      }
+      longestColumnForLine[lineIndex] = column;
+
       const runCount = (runDataLength - runBase) / 5;
       lines.push({ raw, runBase, runCount, runText: {}, endIndex: i, endColumn: column });
       longestLineInColumns = Math.max(longestLineInColumns, column);
@@ -930,7 +957,7 @@
       await progress(text.length - prevProgressPoint);
     }
 
-    return { lines, longestLineInColumns, runData: runData.subarray(0, runDataLength) };
+    return { lines, longestColumnForLine, longestLineInColumns, runData: runData.subarray(0, runDataLength) };
   }
 
   async function createTextArea({ sourceIndex, text, progress, mappings, mappingsOffset, otherSource, originalName, bounds }) {
@@ -938,6 +965,7 @@
     const textPaddingX = 5;
     const textPaddingY = 1;
     const scrollbarThickness = 16;
+    const hoverBoxLineThickness = 2;
 
     // Runs are stored in a flat typed array to improve loading time
     const run_whitespace = index => runData[index] & 0xFF;
@@ -947,20 +975,26 @@
     const run_startColumn = index => runData[index + 3];
     const run_endColumn = index => runData[index + 4];
 
-    let { lines, longestLineInColumns, runData } = await splitTextIntoLinesAndRuns(text, progress);
+    let { lines, longestColumnForLine, longestLineInColumns, runData } = await splitTextIntoLinesAndRuns(text, progress);
     let animate = null;
     let lastLineIndex = lines.length - 1;
     let scrollX = 0;
     let scrollY = 0;
 
+    // Source mappings may lie outside of the source code. This happens both
+    // when the source code is missing or when the source mappings are buggy.
+    // In these cases, we should extend the scroll area to allow the user to
+    // view these out-of-bounds source mappings.
     for (let i = 0, n = mappings.length; i < n; i += 6) {
       let line = mappings[i + mappingsOffset];
       let column = mappings[i + mappingsOffset + 1];
       if (line < lines.length) {
-        const { endIndex, endColumn } = lines[line]
+        const { endIndex, endColumn } = lines[line];
 
         // Take into account tabs tops and surrogate pairs
-        if (column > endColumn) {
+        if (endColumn > column) {
+          column = endColumn;
+        } else if (column > endColumn) {
           column = column - endIndex + endColumn;
         }
       } else if (line > lastLineIndex) {
@@ -969,16 +1003,61 @@
       if (column > longestLineInColumns) {
         longestLineInColumns = column;
       }
+      if (line >= longestColumnForLine.length) {
+        const newData = new Int32Array(longestColumnForLine.length << 1);
+        newData.set(longestColumnForLine);
+        longestColumnForLine = newData;
+      }
+      longestColumnForLine[line] = column;
+    }
+
+    const wrappedRowsCache = new Map;
+
+    function computeColumnsAcross(width, columnWidth) {
+      if (!wrap) return Infinity;
+      return Math.max(1, Math.floor((width - margin - textPaddingX - scrollbarThickness) / columnWidth));
+    }
+
+    function wrappedRowsForColumns(columnsAcross) {
+      let result = wrappedRowsCache.get(columnsAcross);
+      if (!result) {
+        result = new Int32Array(lastLineIndex + 2);
+        let rows = 0, n = lastLineIndex + 1;
+        if (columnsAcross === Infinity) {
+          for (let i = 0; i <= n; i++) {
+            result[i] = i;
+          }
+        } else {
+          for (let i = 0; i < n; i++) {
+            result[i] = rows;
+            rows += Math.ceil(longestColumnForLine[i] / columnsAcross) || 1;
+          }
+          result[n] = rows;
+        }
+        wrappedRowsCache.set(columnsAcross, result);
+      }
+      return result;
     }
 
     function computeScrollbarsAndClampScroll() {
-      let { width, height } = bounds();
+      const { width, height } = bounds();
       c.font = '14px monospace';
-      let columnWidth = c.measureText(' '.repeat(64)).width / 64;
-      let maxScrollX = Math.round(longestLineInColumns * columnWidth + textPaddingX * 2 + margin + scrollbarThickness - width);
-      let maxScrollY = Math.round(lastLineIndex * rowHeight);
+      const columnWidth = c.measureText(' '.repeat(64)).width / 64;
+      const columnsAcross = computeColumnsAcross(width, columnWidth);
+      const wrappedRows = wrappedRowsForColumns(columnsAcross);
+
       let scrollbarX = null;
       let scrollbarY = null;
+      let maxScrollX;
+      let maxScrollY;
+
+      if (wrap) {
+        maxScrollX = 0;
+        maxScrollY = (wrappedRowsForColumns(computeColumnsAcross(width, columnWidth))[lastLineIndex + 1] - 1) * rowHeight;
+      } else {
+        maxScrollX = Math.round(longestLineInColumns * columnWidth + textPaddingX * 2 + margin + scrollbarThickness - width);
+        maxScrollY = lastLineIndex * rowHeight;
+      }
 
       scrollX = Math.max(0, Math.min(scrollX, maxScrollX));
       scrollY = Math.max(0, Math.min(scrollY, maxScrollY));
@@ -999,16 +1078,19 @@
         };
       }
 
-      return { columnWidth, maxScrollX, maxScrollY, scrollbarX, scrollbarY };
+      return {
+        columnWidth, columnsAcross, wrappedRows,
+        maxScrollX, maxScrollY, scrollbarX, scrollbarY,
+      };
     }
 
     const emptyLine = { raw: '', runCount: 0 };
 
-    function analyzeLine(row, column, fractionalColumn, tabStopBehavior) {
+    function analyzeLine(line, column, fractionalColumn, tabStopBehavior) {
       let index = column;
       let firstRun = 0;
       let nearbyRun = 0;
-      let { raw, runBase, runCount, runText } = row < lines.length ? lines[row] : emptyLine;
+      let { raw, runBase, runCount, runText } = line < lines.length ? lines[line] : emptyLine;
       let runLimit = runCount;
       let endOfLineIndex = 0;
       let endOfLineColumn = 0;
@@ -1067,7 +1149,7 @@
         let step = ((mappingCount / 6) >> 1) * 6;
         let it = firstMapping + step;
         let mappingLine = mappings[it + mappingsOffset];
-        if (mappingLine < row || (mappingLine === row && mappings[it + mappingsOffset + 1] < index)) {
+        if (mappingLine < line || (mappingLine === line && mappings[it + mappingsOffset + 1] < index)) {
           firstMapping = it + 6;
           mappingCount -= step + 6;
         } else {
@@ -1076,9 +1158,9 @@
       }
 
       // Back up to the previous mapping if we're at the end of the line or the mapping we found is after us
-      if (firstMapping > 0 && mappings[firstMapping - 6 + mappingsOffset] === row && (
+      if (firstMapping > 0 && mappings[firstMapping - 6 + mappingsOffset] === line && (
         firstMapping >= mappings.length ||
-        mappings[firstMapping + mappingsOffset] > row ||
+        mappings[firstMapping + mappingsOffset] > line ||
         mappings[firstMapping + mappingsOffset + 1] > index
       )) {
         firstMapping -= 6;
@@ -1086,7 +1168,7 @@
 
       // Seek to the first of any duplicate mappings
       const current = mappings[firstMapping + mappingsOffset + 1];
-      while (firstMapping > 0 && mappings[firstMapping - 6 + mappingsOffset] === row && mappings[firstMapping - 6 + mappingsOffset + 1] === current) {
+      while (firstMapping > 0 && mappings[firstMapping - 6 + mappingsOffset] === line && mappings[firstMapping - 6 + mappingsOffset + 1] === current) {
         firstMapping -= 6;
       }
 
@@ -1115,7 +1197,7 @@
       }
 
       function rangeOfMapping(map) {
-        if (mappings[map + mappingsOffset] !== row) return null;
+        if (mappings[map + mappingsOffset] !== line) return null;
         let startIndex = mappings[map + mappingsOffset + 1];
         let endIndex =
           startIndex > endOfLineIndex ? startIndex :
@@ -1124,17 +1206,17 @@
         let isLastMappingInLine = false;
 
         // Ignore subsequent duplicate mappings
-        if (map > 0 && mappings[map - 6 + mappingsOffset] === row && mappings[map - 6 + mappingsOffset + 1] === startIndex) {
+        if (map > 0 && mappings[map - 6 + mappingsOffset] === line && mappings[map - 6 + mappingsOffset + 1] === startIndex) {
           return null;
         }
 
         // Skip past any duplicate mappings after us so we can get to the next non-duplicate mapping
-        while (map + 6 < mappings.length && mappings[map + 6 + mappingsOffset] === row && mappings[map + 6 + mappingsOffset + 1] === startIndex) {
+        while (map + 6 < mappings.length && mappings[map + 6 + mappingsOffset] === line && mappings[map + 6 + mappingsOffset + 1] === startIndex) {
           map += 6;
         }
 
         // Extend this mapping up to the next mapping if it's on the same line
-        if (map + 6 < mappings.length && mappings[map + 6 + mappingsOffset] === row) {
+        if (map + 6 < mappings.length && mappings[map + 6 + mappingsOffset] === line) {
           endIndex = mappings[map + 6 + mappingsOffset + 1];
         } else if (endIndex === startIndex) {
           isLastMappingInLine = true;
@@ -1164,11 +1246,34 @@
       };
     }
 
-    function boxForRange(x, y, row, columnWidth, { startColumn, endColumn }) {
-      const x1 = Math.round(x - scrollX + margin + textPaddingX + startColumn * columnWidth + 1);
-      const x2 = Math.round(x - scrollX + margin + textPaddingX + (startColumn === endColumn ? startColumn * columnWidth + 4 : endColumn * columnWidth) - 1);
-      const y1 = Math.round(y + textPaddingY - scrollY + row * rowHeight + 2);
-      const y2 = Math.round(y + textPaddingY - scrollY + (row + 1) * rowHeight - 2);
+    // This returns the index of the line containing the provided row. This is
+    // not a 1:1 mapping when line wrapping is enabled. The residual row count
+    // (i.e. how many rows are there from the start of the line) can be found
+    // with "row - wrappedRows[lineIndex]".
+    function lineIndexForRow(wrappedRows, row) {
+      let n = lastLineIndex + 1;
+      if (row > wrappedRows[n]) {
+        return n + row - wrappedRows[n];
+      }
+      let lineIndex = 0;
+      while (n > 0) {
+        let step = n >> 1;
+        let it = lineIndex + step;
+        if (wrappedRows[it + 1] <= row) {
+          lineIndex = it + 1;
+          n -= step + 1;
+        } else {
+          n = step;
+        }
+      }
+      return lineIndex;
+    }
+
+    function boxForRange(dx, dy, columnWidth, { startColumn, endColumn }) {
+      const x1 = Math.round(dx + startColumn * columnWidth + 1);
+      const x2 = Math.round(dx + (startColumn === endColumn ? startColumn * columnWidth + 4 : endColumn * columnWidth) - 1);
+      const y1 = Math.round(dy + 2);
+      const y2 = Math.round(dy + + rowHeight - 2);
       return [x1, y1, x2, y2];
     }
 
@@ -1176,16 +1281,36 @@
       sourceIndex,
       bounds,
 
+      updateAfterWrapChange() {
+        scrollX = 0;
+        computeScrollbarsAndClampScroll();
+      },
+
       getHoverRect() {
-        const row = sourceIndex === null ? hover.mapping.generatedLine : hover.mapping.originalLine;
+        const lineIndex = sourceIndex === null ? hover.mapping.generatedLine : hover.mapping.originalLine;
         const index = sourceIndex === null ? hover.mapping.generatedColumn : hover.mapping.originalColumn;
-        const column = analyzeLine(row, index, index, 'floor').indexToColumn(index);
-        const { firstMapping, rangeOfMapping } = analyzeLine(row, column, column, 'floor');
+        const column = analyzeLine(lineIndex, index, index, 'floor').indexToColumn(index);
+        const { firstMapping, rangeOfMapping } = analyzeLine(lineIndex, column, column, 'floor');
         const range = rangeOfMapping(firstMapping);
         if (!range) return null;
         const { x, y } = bounds();
-        const { columnWidth } = computeScrollbarsAndClampScroll();
-        const [x1, y1, x2, y2] = boxForRange(x, y, row, columnWidth, range);
+        const { columnWidth, columnsAcross, wrappedRows } = computeScrollbarsAndClampScroll();
+
+        // Compute the mouse row accounting for line wrapping
+        const rowDelta = wrap ? Math.floor(column / columnsAcross) : 0;
+        const row = wrappedRows[lineIndex] + rowDelta;
+        const dx = x - scrollX + margin + textPaddingX;
+        const dy = y - scrollY + textPaddingY + row * rowHeight;
+
+        // Adjust the mouse column due to line wrapping
+        let { startColumn, endColumn } = range;
+        if (wrap) {
+          const columnAdjustment = rowDelta * columnsAcross;
+          startColumn -= columnAdjustment;
+          endColumn -= columnAdjustment;
+        }
+
+        const [x1, y1, x2, y2] = boxForRange(dx, dy, columnWidth, { startColumn, endColumn });
         return [x1, y1, x2 - x1, y2 - y1];
       },
 
@@ -1203,18 +1328,28 @@
       onmousemove(e) {
         const { x, y, width, height } = bounds();
 
-        if (e.pageX >= x + margin && e.pageX < x + width && e.pageY >= y && e.pageY < y + height) {
-          const { columnWidth } = computeScrollbarsAndClampScroll();
-          const fractionalColumn = (e.pageX - x - margin - textPaddingX + scrollX) / columnWidth;
-          const roundedColumn = Math.round(fractionalColumn);
+        if (
+          e.pageX >= x + margin && e.pageX < x + width - scrollbarThickness &&
+          e.pageY >= y && e.pageY < y + height
+        ) {
+          const { columnWidth, columnsAcross, wrappedRows } = computeScrollbarsAndClampScroll();
+          let fractionalColumn = (e.pageX - x - margin - textPaddingX + scrollX) / columnWidth;
+          let roundedColumn = Math.round(fractionalColumn);
 
           if (roundedColumn >= 0) {
             const row = Math.floor((e.pageY - y - textPaddingY + scrollY) / rowHeight);
 
             if (row >= 0) {
+              // Adjust the mouse column due to line wrapping
+              const lineIndex = lineIndexForRow(wrappedRows, row);
+              const firstColumn = wrap && lineIndex < wrappedRows.length ? (row - wrappedRows[lineIndex]) * columnsAcross : 0;
+              const lastColumn = firstColumn + columnsAcross;
+              fractionalColumn += firstColumn;
+              roundedColumn += firstColumn;
+
               const flooredColumn = Math.floor(fractionalColumn);
-              const { index: snappedRoundedIndex, column: snappedRoundedColumn } = analyzeLine(row, roundedColumn, fractionalColumn, 'round');
-              const { index: snappedFlooredIndex, firstMapping, rangeOfMapping } = analyzeLine(row, flooredColumn, fractionalColumn, 'floor');
+              const { index: snappedRoundedIndex, column: snappedRoundedColumn } = analyzeLine(lineIndex, roundedColumn, fractionalColumn, 'round');
+              const { index: snappedFlooredIndex, firstMapping, rangeOfMapping } = analyzeLine(lineIndex, flooredColumn, fractionalColumn, 'floor');
 
               // Check to see if this nearest mapping is being hovered
               let mapping = null;
@@ -1224,7 +1359,8 @@
                 (range.isLastMappingInLine && range.startIndex === snappedRoundedIndex) ||
 
                 // Otherwise, determine the bounding-box and hit-test against that
-                (snappedFlooredIndex >= range.startIndex && snappedFlooredIndex < range.endIndex)
+                (snappedFlooredIndex >= range.startIndex && snappedFlooredIndex < range.endIndex &&
+                  range.startColumn < lastColumn && range.endColumn > firstColumn)
               )) {
                 mapping = {
                   generatedLine: mappings[firstMapping],
@@ -1236,7 +1372,7 @@
                 };
               }
 
-              hover = { sourceIndex, row, column: snappedRoundedColumn, index: snappedRoundedIndex, mapping };
+              hover = { sourceIndex, lineIndex, row, column: snappedRoundedColumn, index: snappedRoundedIndex, mapping };
             }
           }
         }
@@ -1293,18 +1429,19 @@
         e.preventDefault();
       },
 
-      scrollTo(index, row) {
+      scrollTo(index, line) {
         const start = Date.now();
         const startX = scrollX;
         const startY = scrollY;
         const { width, height } = bounds();
-        const { columnWidth } = computeScrollbarsAndClampScroll();
-        const { indexToColumn } = analyzeLine(row, index, index, 'floor');
+        const { columnWidth, columnsAcross, wrappedRows } = computeScrollbarsAndClampScroll();
+        const { indexToColumn } = analyzeLine(line, index, index, 'floor');
         const column = indexToColumn(index);
-        const { firstMapping, rangeOfMapping } = analyzeLine(row, column, column, 'floor');
+        const { firstMapping, rangeOfMapping } = analyzeLine(line, column, column, 'floor');
         const range = rangeOfMapping(firstMapping);
         const targetColumn = range ? range.startColumn + Math.min((range.endColumn - range.startColumn) / 2, (width - margin) / 4 / columnWidth) : column;
         const endX = Math.max(0, Math.round(targetColumn * columnWidth - (width - margin) / 2));
+        const row = wrap ? wrappedRows[line] + Math.floor(column / columnsAcross) : line;
         const endY = Math.max(0, Math.round((row + 0.5) * rowHeight - height / 2));
         if (startX === endX && startY === endY) return;
         const duration = 250;
@@ -1328,33 +1465,10 @@
       draw(bodyStyle) {
         if (animate) animate();
 
-        const { x, y, width, height } = bounds();
-        const textColor = bodyStyle.color;
-        const backgroundColor = bodyStyle.backgroundColor;
-        const { columnWidth, maxScrollX, maxScrollY, scrollbarX, scrollbarY } = computeScrollbarsAndClampScroll();
-
-        const firstColumn = Math.max(0, Math.floor((scrollX - textPaddingX) / columnWidth));
-        const lastColumn = Math.max(0, Math.ceil((scrollX - textPaddingX + width - margin) / columnWidth));
-        const firstRow = Math.max(0, Math.floor((scrollY - textPaddingY) / rowHeight));
-        const lastRow = Math.max(0, Math.ceil((scrollY - textPaddingY + height) / rowHeight));
-
-        // Populate batches for the text
-        const hoverBoxes = [];
-        const hoveredMapping = hover && hover.mapping;
-        const mappingBatches = [];
-        const badMappingBatches = [];
-        const whitespaceBatch = [];
-        const textBatch = [];
-        let hoveredName = null;
-        for (let i = 0; i < originalLineColors.length; i++) {
-          mappingBatches.push([]);
-          badMappingBatches.push([]);
-        }
-        for (let row = firstRow; row <= lastRow; row++) {
-          let dx = x - scrollX + margin + textPaddingX;
-          let dy = y - scrollY + textPaddingY;
-          dy += (row + 0.7) * rowHeight;
-          const { raw, firstRun, runBase, runCount, runText, firstMapping, endOfLineColumn, rangeOfMapping, columnToIndex } = analyzeLine(row, firstColumn, firstColumn, 'floor');
+        const drawRow = (dx, dy, lineIndex, firstColumn, lastColumn) => {
+          const {
+            raw, firstRun, runBase, runCount, runText, firstMapping, endOfLineColumn, rangeOfMapping, columnToIndex,
+          } = analyzeLine(lineIndex, firstColumn, firstColumn, 'floor');
           const lastIndex = columnToIndex(lastColumn);
 
           // Don't draw any text if the whole line is offscreen
@@ -1366,6 +1480,7 @@
             }
 
             // Draw the runs
+            const dyForText = dy + 0.7 * rowHeight;
             let currentColumn = firstColumn;
             for (let i = firstRun; i <= lastRun; i++) {
               const run = runBase + 5 * i;
@@ -1381,7 +1496,7 @@
                 text = runText[i] =
                   !whitespace ? raw.slice(run_startIndex(run), run_endIndex(run)) :
                     whitespace === 0x20 /* space */ ? '·'.repeat(run_endIndex(run) - run_startIndex(run)) :
-                      whitespace === 0x0A /* newline */ ? row === lines.length - 1 ? '∅' : '↵' :
+                      whitespace === 0x0A /* newline */ ? lineIndex === lines.length - 1 ? '∅' : '↵' :
                         '→' /* tab */;
               }
 
@@ -1398,14 +1513,14 @@
               }
 
               // Draw whitespace in a separate batch
-              (whitespace ? whitespaceBatch : textBatch).push(text, dx + startColumn * columnWidth, dy);
+              (whitespace ? whitespaceBatch : textBatch).push(text, dx + startColumn * columnWidth, dyForText);
               currentColumn = endColumn;
             }
           }
 
           // Draw the mappings
           for (let map = firstMapping; map < mappings.length; map += 6) {
-            if (mappings[map + mappingsOffset] !== row || mappings[map + mappingsOffset + 1] >= lastIndex) break;
+            if (mappings[map + mappingsOffset] !== lineIndex || mappings[map + mappingsOffset + 1] >= lastIndex) break;
             if (mappings[map + 2] === -1) continue;
 
             // Get the bounds of this mapping, which may be empty if it's ignored
@@ -1413,7 +1528,7 @@
             if (range === null) continue;
             const { startColumn, endColumn } = range;
             const color = mappings[map + 3] % originalLineColors.length;
-            const [x1, y1, x2, y2] = boxForRange(x, y, row, columnWidth, range);
+            const [x1, y1, x2, y2] = boxForRange(dx, dy, columnWidth, range);
 
             // Check if this mapping is hovered
             let isHovered = false;
@@ -1436,11 +1551,11 @@
                 // mapping instead of showing everything that matches the target
                 // so hovering isn't confusing.
                 : isGenerated ? matchesGenerated : matchesOriginal);
-              if (isGenerated && matchesGenerated && hoveredMapping.originalName !== -1) {
+              if (isGenerated && matchesGenerated && hoveredMapping.originalName !== -1 && !hoveredName) {
                 hoveredName = {
                   text: originalName(hoveredMapping.originalName),
-                  x: Math.round(x - scrollX + margin + textPaddingX + range.startColumn * columnWidth - 2),
-                  y: Math.round(y + textPaddingY - scrollY + (row + 1.2) * rowHeight),
+                  x: Math.round(dx + range.startColumn * columnWidth - hoverBoxLineThickness),
+                  y: Math.round(dy + 1.2 * rowHeight),
                 };
               }
             }
@@ -1448,7 +1563,7 @@
             // Add a rectangle to that color's batch
             if (isHovered) {
               hoverBoxes.push({ color, rect: [x1 - 2, y1 - 2, x2 - x1 + 4, y2 - y1 + 4] });
-            } else if (row >= lines.length || startColumn > endOfLineColumn) {
+            } else if (lineIndex >= lines.length || startColumn > endOfLineColumn) {
               badMappingBatches[color].push(x1, y1, x2 - x1, y2 - y1);
             } else if (endColumn > endOfLineColumn) {
               let x12 = Math.round(x1 + (endOfLineColumn - startColumn) * columnWidth);
@@ -1457,6 +1572,51 @@
             } else {
               mappingBatches[color].push(x1, y1, x2 - x1, y2 - y1);
             }
+          }
+        };
+
+        const { x, y, width, height } = bounds();
+        const textColor = bodyStyle.color;
+        const backgroundColor = bodyStyle.backgroundColor;
+        const {
+          columnWidth, columnsAcross, wrappedRows,
+          maxScrollX, maxScrollY, scrollbarX, scrollbarY,
+        } = computeScrollbarsAndClampScroll();
+
+        // Compute the visible column/row rectangle
+        const firstColumn = Math.max(0, Math.floor((scrollX - textPaddingX) / columnWidth));
+        const lastColumn = Math.max(0, Math.ceil((scrollX - textPaddingX + width - margin - (wrap ? scrollbarThickness : 0)) / columnWidth));
+        const firstRow = Math.max(0, Math.floor((scrollY - textPaddingY) / rowHeight));
+        const lastRow = Math.max(0, Math.ceil((scrollY - textPaddingY + height) / rowHeight));
+        const firstLineIndex = lineIndexForRow(wrappedRows, firstRow);
+
+        // Populate batches for the text
+        const hoverBoxes = [];
+        const hoveredMapping = hover && hover.mapping;
+        const mappingBatches = [];
+        const badMappingBatches = [];
+        const whitespaceBatch = [];
+        const textBatch = [];
+        let hoveredName = null;
+        let lineIndex = firstLineIndex;
+        let lineRow = wrappedRows[lineIndex];
+        for (let i = 0; i < originalLineColors.length; i++) {
+          mappingBatches.push([]);
+          badMappingBatches.push([]);
+        }
+        for (let row = firstRow; row <= lastRow; row++) {
+          const dx = x - scrollX + margin + textPaddingX;
+          const dy = y - scrollY + textPaddingY + row * rowHeight;
+          const columnAdjustment = wrap ? (row - lineRow) * columnsAcross : 0;
+          drawRow(dx - columnAdjustment * columnWidth, dy, lineIndex,
+            columnAdjustment + firstColumn,
+            columnAdjustment + Math.max(firstColumn + 1, lastColumn - 1));
+          if (lineIndex + 1 >= wrappedRows.length) {
+            lineIndex++;
+            lineRow++;
+          } else if (row + 1 >= wrappedRows[lineIndex + 1]) {
+            lineIndex++;
+            lineRow = wrappedRows[lineIndex];
           }
         }
 
@@ -1501,7 +1661,7 @@
             c.clearRect(rx, ry, rw, rh);
           }
           c.strokeStyle = textColor;
-          c.lineWidth = 2;
+          c.lineWidth = hoverBoxLineThickness;
           for (const { rect: [rx, ry, rw, rh] } of hoverBoxes) {
             c.strokeRect(rx, ry, rw, rh);
           }
@@ -1515,13 +1675,14 @@
 
         // Draw the hover caret, but only for this text area
         else if (hover && hover.sourceIndex === sourceIndex) {
-          const caretX = Math.round(x - scrollX + margin + textPaddingX + hover.column * columnWidth);
+          const column = hover.column - (wrap && hover.lineIndex < wrappedRows.length ? columnsAcross * (hover.row - wrappedRows[hover.lineIndex]) : 0);
+          const caretX = Math.round(x - scrollX + margin + textPaddingX + column * columnWidth);
           const caretY = Math.round(y - scrollY + textPaddingY + hover.row * rowHeight);
           c.fillStyle = textColor;
           c.globalAlpha = 0.5;
           c.fillRect(caretX, caretY, 1, rowHeight);
           c.globalAlpha = 1;
-          status = `Line ${hover.row + 1}, Offset ${hover.index}`;
+          status = `Line ${hover.lineIndex + 1}, Offset ${hover.index}`;
         }
 
         // Update the status bar
@@ -1537,9 +1698,34 @@
         }
         (sourceIndex === null ? generatedStatus : originalStatus).textContent = status;
 
-        // Flush batches for the text
+        // Fade out wrapped mappings and hover boxes
+        const wrapLeft = x + margin + textPaddingX;
+        const wrapRight = wrapLeft + columnsAcross * columnWidth;
+        if (wrap) {
+          const transparentBackground = backgroundColor.replace(/^rgb\((\d+), (\d+), (\d+)\)$/, 'rgba($1, $2, $3, 0)');
+          const leftFill = c.createLinearGradient(wrapLeft - textPaddingX, 0, wrapLeft, 0);
+          const rightFill = c.createLinearGradient(wrapRight + textPaddingX, 0, wrapRight, 0);
+
+          leftFill.addColorStop(0, backgroundColor);
+          leftFill.addColorStop(1, transparentBackground);
+          c.fillStyle = leftFill;
+          c.fillRect(wrapLeft - textPaddingX, y, textPaddingX, height);
+
+          rightFill.addColorStop(0, backgroundColor);
+          rightFill.addColorStop(1, transparentBackground);
+          c.fillStyle = rightFill;
+          c.fillRect(wrapRight, y, x + width - wrapRight, height);
+        }
+
+        // Flush batches for the text, clipped to the wrap area (will cut emojis in half)
         c.textBaseline = 'alphabetic';
         c.textAlign = 'left';
+        if (wrap) {
+          c.save();
+          c.beginPath();
+          c.rect(wrapLeft, y, wrapRight - wrapLeft, height);
+          c.clip();
+        }
         if (whitespaceBatch.length > 0) {
           c.fillStyle = 'rgba(150, 150, 150, 0.4)';
           for (let j = 0; j < whitespaceBatch.length; j += 3) {
@@ -1552,18 +1738,25 @@
             c.fillText(textBatch[j], textBatch[j + 1], textBatch[j + 2]);
           }
         }
+        if (wrap) {
+          c.restore();
+        }
 
         // Draw the original name tooltip
         if (hoveredName) {
-          const { text, x, y } = hoveredName;
+          let { text, x: nameX, y: nameY } = hoveredName;
           const w = 2 * textPaddingX + c.measureText(text).width;
           const h = rowHeight;
           const r = 4;
+          if (wrap) {
+            // Clamp the tooltip in the viewport when wrapping is enabled
+            nameX = Math.max(wrapLeft - hoverBoxLineThickness, Math.min(wrapRight - w + hoverBoxLineThickness, nameX));
+          }
           c.beginPath();
-          c.arc(x + r, y + r, r, - Math.PI, -Math.PI / 2, false);
-          c.arc(x + w - r, y + r, r, -Math.PI / 2, 0, false);
-          c.arc(x + w - r, y + h - r, r, 0, Math.PI / 2, false);
-          c.arc(x + r, y + h - r, r, Math.PI / 2, Math.PI, false);
+          c.arc(nameX + r, nameY + r, r, - Math.PI, -Math.PI / 2, false);
+          c.arc(nameX + w - r, nameY + r, r, -Math.PI / 2, 0, false);
+          c.arc(nameX + w - r, nameY + h - r, r, 0, Math.PI / 2, false);
+          c.arc(nameX + r, nameY + h - r, r, Math.PI / 2, Math.PI, false);
           c.save();
           c.shadowColor = 'rgba(0, 0, 0, 0.5)';
           c.shadowOffsetY = 3;
@@ -1572,7 +1765,7 @@
           c.fill();
           c.restore();
           c.fillStyle = backgroundColor;
-          c.fillText(text, x + textPaddingX, y + 0.7 * rowHeight);
+          c.fillText(text, nameX + textPaddingX, nameY + 0.7 * rowHeight);
         }
 
         // Draw the margin shadow
@@ -1616,12 +1809,13 @@
         c.textAlign = 'right';
         c.fillStyle = textColor;
         c.font = '11px monospace';
-        for (let row = firstRow; row <= lastRow && row <= lastLineIndex; row++) {
-          let dx = x + margin - textPaddingX;
-          let dy = y - scrollY + textPaddingY;
-          dy += (row + 0.6) * rowHeight;
-          c.globalAlpha = row < lines.length ? 0.625 : 0.25;
-          c.fillText((row + 1).toString(), dx, dy);
+        for (let i = firstLineIndex, n = wrappedRows.length; i <= lastLineIndex; i++) {
+          const row = i < n ? wrappedRows[i] : wrappedRows[n - 1] + (i - (n - 1));
+          if (row > lastRow) break;
+          const dx = x + margin - textPaddingX;
+          const dy = y - scrollY + textPaddingY + (row + 0.6) * rowHeight;
+          c.globalAlpha = i < lines.length ? 0.625 : 0.25;
+          c.fillText((i + 1).toString(), dx, dy);
         }
         c.font = monospaceFont;
         c.globalAlpha = 1;

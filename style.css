@@ -88,13 +88,22 @@ canvas {
   padding-left: 8px;
 }
 
-#statusBar section>* {
+#statusBar section>:first-child {
   vertical-align: middle;
   margin-right: 20px;
   opacity: 0.7;
   white-space: pre;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.spacer {
+  flex: 1;
+}
+
+label {
+  white-space: nowrap;
+  padding-right: 20px;
 }
 
 #fileListParent {
