@@ -905,10 +905,11 @@
         }
 
         runs.push({
-          whitespace,
-          startIndex, endIndex: i,
-          startColumn, endColumn: column,
-          isSingleChunk,
+          whitespaceAndFlags: whitespace | (isSingleChunk ? 0x100 /* isSingleChunk */ : 0),
+          startIndex,
+          endIndex: i,
+          startColumn,
+          endColumn: column,
         });
       }
 
@@ -1002,7 +1003,7 @@
         endOfLineIndex = lastRun.endIndex;
         endOfLineColumn = lastRun.endColumn;
         beforeNewlineIndex = lastRun.startIndex;
-        hasTrailingNewline = lastRun.whitespace === 0x0A /* newline */;
+        hasTrailingNewline = (lastRun.whitespaceAndFlags & 0xFF) === 0x0A /* newline */;
 
         // Binary search to find the first run
         firstRun = 0;
@@ -1025,7 +1026,7 @@
         while (runs[nearbyRun].startColumn > column && nearbyRun > 0) nearbyRun--;
         while (runs[nearbyRun].endColumn < column && nearbyRun + 1 < runs.length) nearbyRun++;
         let run = runs[nearbyRun];
-        if (run.isSingleChunk && column <= run.endColumn) {
+        if ((run.whitespaceAndFlags & 0x100 /* isSingleChunk */) && column <= run.endColumn) {
           // A special case for single-character blocks such as tabs and emoji
           if (
             (tabStopBehavior === 'round' && fractionalColumn >= (run.startColumn + run.endColumn) / 2) ||
@@ -1350,7 +1351,8 @@
             let currentColumn = firstColumn;
             for (let i = firstRun; i <= lastRun; i++) {
               const run = runs[i];
-              let { whitespace, startColumn, endColumn } = run;
+              let { whitespaceAndFlags, startColumn, endColumn } = run;
+              let whitespace = whitespaceAndFlags & 0xFF;
               let text = runsText[i];
 
               // Lazily-generate text for runs to improve performance. When
@@ -1365,7 +1367,7 @@
               }
 
               // Limit the run to the visible columns (but only for ASCII runs)
-              if (!run.isSingleChunk) {
+              if (!(run.whitespaceAndFlags & 0x100 /* isSingleChunk */)) {
                 if (startColumn < currentColumn) {
                   text = text.slice(currentColumn - startColumn);
                   startColumn = currentColumn;
