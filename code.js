@@ -772,6 +772,8 @@
     const unicodeWidthCache = new Map();
     const lines = [];
     const progressChunkSize = 1 << 20;
+    let runData = new Int32Array(1024);
+    let runDataLength = 0;
     let prevProgressPoint = 0;
     let longestLineInColumns = 0;
     let lineStartOffset = 0;
@@ -784,10 +786,10 @@
         continue;
       }
 
+      const runBase = runDataLength;
+      const n = raw.length + 1; // Add 1 for the extra character at the end
       let nextProgressPoint = progress ? prevProgressPoint + progressChunkSize - lineStartOffset : Infinity;
-      let runs = [];
       let i = 0;
-      let n = raw.length + 1; // Add 1 for the extra character at the end
       let column = 0;
 
       while (i < n) {
@@ -904,16 +906,22 @@
           i++;
         }
 
-        runs.push({
-          whitespaceAndFlags: whitespace | (isSingleChunk ? 0x100 /* isSingleChunk */ : 0),
-          startIndex,
-          endIndex: i,
-          startColumn,
-          endColumn: column,
-        });
+        // Append the run to the typed array
+        if (runDataLength + 5 > runData.length) {
+          const newData = new Int32Array(runData.length << 1);
+          newData.set(runData);
+          runData = newData;
+        }
+        runData[runDataLength] = whitespace | (isSingleChunk ? 0x100 /* isSingleChunk */ : 0);
+        runData[runDataLength + 1] = startIndex;
+        runData[runDataLength + 2] = i;
+        runData[runDataLength + 3] = startColumn;
+        runData[runDataLength + 4] = column;
+        runDataLength += 5;
       }
 
-      lines.push({ raw, runs, runsText: {}, endIndex: i, endColumn: column });
+      const runCount = (runDataLength - runBase) / 5;
+      lines.push({ raw, runBase, runCount, runText: {}, endIndex: i, endColumn: column });
       longestLineInColumns = Math.max(longestLineInColumns, column);
       lineStartOffset += raw.length;
     }
@@ -922,7 +930,7 @@
       await progress(text.length - prevProgressPoint);
     }
 
-    return { lines, longestLineInColumns };
+    return { lines, longestLineInColumns, runData: runData.subarray(0, runDataLength) };
   }
 
   async function createTextArea({ sourceIndex, text, progress, mappings, mappingsOffset, otherSource, originalName, bounds }) {
@@ -930,7 +938,16 @@
     const textPaddingX = 5;
     const textPaddingY = 1;
     const scrollbarThickness = 16;
-    let { lines, longestLineInColumns } = await splitTextIntoLinesAndRuns(text, progress);
+
+    // Runs are stored in a flat typed array to improve loading time
+    const run_whitespace = index => runData[index] & 0xFF;
+    const run_isSingleChunk = index => runData[index] & 0x100;
+    const run_startIndex = index => runData[index + 1];
+    const run_endIndex = index => runData[index + 2];
+    const run_startColumn = index => runData[index + 3];
+    const run_endColumn = index => runData[index + 4];
+
+    let { lines, longestLineInColumns, runData } = await splitTextIntoLinesAndRuns(text, progress);
     let animate = null;
     let lastLineIndex = lines.length - 1;
     let scrollX = 0;
@@ -985,61 +1002,61 @@
       return { columnWidth, maxScrollX, maxScrollY, scrollbarX, scrollbarY };
     }
 
-    const emptyLine = { raw: '', runs: [] };
+    const emptyLine = { raw: '', runCount: 0 };
 
     function analyzeLine(row, column, fractionalColumn, tabStopBehavior) {
       let index = column;
       let firstRun = 0;
       let nearbyRun = 0;
-      let { raw, runs, runsText } = row < lines.length ? lines[row] : emptyLine;
-      let runCount = runs.length;
+      let { raw, runBase, runCount, runText } = row < lines.length ? lines[row] : emptyLine;
+      let runLimit = runCount;
       let endOfLineIndex = 0;
       let endOfLineColumn = 0;
       let beforeNewlineIndex = 0;
       let hasTrailingNewline = false;
 
-      if (runCount > 0) {
-        let lastRun = runs[runCount - 1];
-        endOfLineIndex = lastRun.endIndex;
-        endOfLineColumn = lastRun.endColumn;
-        beforeNewlineIndex = lastRun.startIndex;
-        hasTrailingNewline = (lastRun.whitespaceAndFlags & 0xFF) === 0x0A /* newline */;
+      if (runLimit > 0) {
+        let lastRun = runBase + 5 * (runLimit - 1);
+        endOfLineIndex = run_endIndex(lastRun);
+        endOfLineColumn = run_endColumn(lastRun);
+        beforeNewlineIndex = run_startIndex(lastRun);
+        hasTrailingNewline = run_whitespace(lastRun) === 0x0A /* newline */;
 
         // Binary search to find the first run
         firstRun = 0;
-        while (runCount > 0) {
-          let step = runCount >> 1;
+        while (runLimit > 0) {
+          let step = runLimit >> 1;
           let it = firstRun + step;
-          if (runs[it].endColumn < column) {
+          if (run_endColumn(runBase + 5 * it) < column) {
             firstRun = it + 1;
-            runCount -= step + 1;
+            runLimit -= step + 1;
           } else {
-            runCount = step;
+            runLimit = step;
           }
         }
 
         // Use the last run if we're past the end of the line
-        if (firstRun >= runs.length) firstRun--;
+        if (firstRun >= runCount) firstRun--;
 
         // Convert column to index
         nearbyRun = firstRun;
-        while (runs[nearbyRun].startColumn > column && nearbyRun > 0) nearbyRun--;
-        while (runs[nearbyRun].endColumn < column && nearbyRun + 1 < runs.length) nearbyRun++;
-        let run = runs[nearbyRun];
-        if ((run.whitespaceAndFlags & 0x100 /* isSingleChunk */) && column <= run.endColumn) {
+        while (run_startColumn(runBase + 5 * nearbyRun) > column && nearbyRun > 0) nearbyRun--;
+        while (run_endColumn(runBase + 5 * nearbyRun) < column && nearbyRun + 1 < runCount) nearbyRun++;
+        let run = runBase + 5 * nearbyRun;
+        if (run_isSingleChunk(run) && column <= run_endColumn(run)) {
           // A special case for single-character blocks such as tabs and emoji
           if (
-            (tabStopBehavior === 'round' && fractionalColumn >= (run.startColumn + run.endColumn) / 2) ||
-            (tabStopBehavior === 'floor' && fractionalColumn >= run.endColumn)
+            (tabStopBehavior === 'round' && fractionalColumn >= (run_startColumn(run) + run_endColumn(run)) / 2) ||
+            (tabStopBehavior === 'floor' && fractionalColumn >= run_endColumn(run))
           ) {
-            index = run.endIndex;
-            column = run.endColumn;
+            index = run_endIndex(run);
+            column = run_endColumn(run);
           } else {
-            index = run.startIndex;
-            column = run.startColumn;
+            index = run_startIndex(run);
+            column = run_startColumn(run);
           }
         } else {
-          index = run.startIndex + column - run.startColumn;
+          index = run_startIndex(run) + column - run_startColumn(run);
         }
       }
 
@@ -1076,11 +1093,11 @@
       function columnToIndex(column) {
         // If there is no underlying line, just use one index per column
         let index = column;
-        if (runs.length > 0) {
-          while (runs[nearbyRun].startColumn > column && nearbyRun > 0) nearbyRun--;
-          while (runs[nearbyRun].endColumn < column && nearbyRun + 1 < runs.length) nearbyRun++;
-          let run = runs[nearbyRun];
-          index = column === run.endColumn ? run.endIndex : run.endIndex + column - run.startColumn;
+        if (runCount > 0) {
+          while (run_startColumn(runBase + 5 * nearbyRun) > column && nearbyRun > 0) nearbyRun--;
+          while (run_endColumn(runBase + 5 * nearbyRun) < column && nearbyRun + 1 < runCount) nearbyRun++;
+          let run = runBase + 5 * nearbyRun;
+          index = column === run_endColumn(run) ? run_endIndex(run) : run_endIndex(run) + column - run_startColumn(run);
         }
         return index;
       }
@@ -1088,11 +1105,11 @@
       function indexToColumn(index) {
         // If there is no underlying line, just use one column per index
         let column = index;
-        if (runs.length > 0) {
-          while (runs[nearbyRun].startIndex > index && nearbyRun > 0) nearbyRun--;
-          while (runs[nearbyRun].endIndex < index && nearbyRun + 1 < runs.length) nearbyRun++;
-          let run = runs[nearbyRun];
-          column = index === run.endIndex ? run.endColumn : run.startColumn + index - run.startIndex;
+        if (runCount > 0) {
+          while (run_startIndex(runBase + 5 * nearbyRun) > index && nearbyRun > 0) nearbyRun--;
+          while (run_endIndex(runBase + 5 * nearbyRun) < index && nearbyRun + 1 < runCount) nearbyRun++;
+          let run = runBase + 5 * nearbyRun;
+          column = index === run_endIndex(run) ? run_endColumn(run) : run_startColumn(run) + index - run_startIndex(run);
         }
         return column;
       }
@@ -1135,8 +1152,9 @@
         index,
         column,
         firstRun,
-        runs,
-        runsText,
+        runBase,
+        runCount,
+        runText,
         firstMapping,
         endOfLineIndex,
         endOfLineColumn,
@@ -1336,38 +1354,39 @@
           let dx = x - scrollX + margin + textPaddingX;
           let dy = y - scrollY + textPaddingY;
           dy += (row + 0.7) * rowHeight;
-          const { raw, firstRun, runs, runsText, firstMapping, endOfLineColumn, rangeOfMapping, columnToIndex } = analyzeLine(row, firstColumn, firstColumn, 'floor');
+          const { raw, firstRun, runBase, runCount, runText, firstMapping, endOfLineColumn, rangeOfMapping, columnToIndex } = analyzeLine(row, firstColumn, firstColumn, 'floor');
           const lastIndex = columnToIndex(lastColumn);
 
           // Don't draw any text if the whole line is offscreen
-          if (firstRun < runs.length) {
+          if (firstRun < runCount) {
             // Scan to find the last run
             let lastRun = firstRun;
-            while (lastRun + 1 < runs.length && runs[lastRun + 1].startColumn < lastColumn) {
+            while (lastRun + 1 < runCount && run_startColumn(runBase + 5 * (lastRun + 1)) < lastColumn) {
               lastRun++;
             }
 
             // Draw the runs
             let currentColumn = firstColumn;
             for (let i = firstRun; i <= lastRun; i++) {
-              const run = runs[i];
-              let { whitespaceAndFlags, startColumn, endColumn } = run;
-              let whitespace = whitespaceAndFlags & 0xFF;
-              let text = runsText[i];
+              const run = runBase + 5 * i;
+              let startColumn = run_startColumn(run);
+              let endColumn = run_endColumn(run);
+              let whitespace = run_whitespace(run);
+              let text = runText[i];
 
               // Lazily-generate text for runs to improve performance. When
               // this happens, the run text is the code unit offset of the
               // start of the line containing this run.
               if (text === void 0) {
-                text = runsText[i] =
-                  !whitespace ? raw.slice(run.startIndex, run.endIndex) :
-                    whitespace === 0x20 /* space */ ? '·'.repeat(run.endIndex - run.startIndex) :
+                text = runText[i] =
+                  !whitespace ? raw.slice(run_startIndex(run), run_endIndex(run)) :
+                    whitespace === 0x20 /* space */ ? '·'.repeat(run_endIndex(run) - run_startIndex(run)) :
                       whitespace === 0x0A /* newline */ ? row === lines.length - 1 ? '∅' : '↵' :
                         '→' /* tab */;
               }
 
               // Limit the run to the visible columns (but only for ASCII runs)
-              if (!(run.whitespaceAndFlags & 0x100 /* isSingleChunk */)) {
+              if (!run_isSingleChunk(run)) {
                 if (startColumn < currentColumn) {
                   text = text.slice(currentColumn - startColumn);
                   startColumn = currentColumn;
