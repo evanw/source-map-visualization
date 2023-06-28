@@ -61,6 +61,8 @@
   const errorText = document.getElementById('errorText');
   const toolbar = document.getElementById('toolbar');
   const statusBar = document.getElementById('statusBar');
+  const progressBarOverlay = document.getElementById('progressBar');
+  const progressBar = document.querySelector('#progressBar .progress');
   const originalStatus = document.getElementById('originalStatus');
   const generatedStatus = document.getElementById('generatedStatus');
 
@@ -579,33 +581,64 @@
   const toolbarHeight = 32;
   const statusBarHeight = 32;
 
-  function finishLoading(code, map) {
+  function waitForDOM() {
+    return new Promise(r => setTimeout(r, 1));
+  }
+
+  async function finishLoading(code, map) {
     const startTime = Date.now();
     promptText.style.display = 'none';
     toolbar.style.display = 'flex';
     statusBar.style.display = 'flex';
     canvas.style.display = 'block';
+    originalStatus.textContent = generatedStatus.textContent = '';
+    fileList.innerHTML = '';
+    const option = document.createElement('option');
+    option.textContent = `Loading...`;
+    fileList.appendChild(option);
+    fileList.disabled = true;
+    fileList.selectedIndex = 0;
+    originalTextArea = generatedTextArea = hover = null;
+    isInvalid = true;
     updateHash(code, map);
+
+    // Let the browser update before parsing the source map, which may be slow
+    await waitForDOM();
     const sm = parseSourceMap(map);
 
-    // Populate the file picker
-    fileList.innerHTML = '';
-    for (let sources = sm.sources, i = 0, n = sources.length; i < n; i++) {
-      const option = document.createElement('option');
-      option.textContent = `${i}: ${sources[i].name}`;
-      fileList.appendChild(option);
-    }
+    // Show a progress bar if this is is going to take a while
+    let charsSoFar = 0;
+    let progressCalls = 0;
+    let isProgressVisible = false;
+    const progressStart = Date.now();
+    const totalChars = code.length + (sm.sources.length > 0 ? sm.sources[0].content.length : 0);
+    const progress = chars => {
+      charsSoFar += chars;
+      if (!isProgressVisible && progressCalls++ > 2 && charsSoFar) {
+        const estimatedTimeLeftMS = (Date.now() - progressStart) / charsSoFar * (totalChars - charsSoFar);
+        if (estimatedTimeLeftMS > 250) {
+          progressBarOverlay.style.display = 'block';
+          isProgressVisible = true;
+        }
+      }
+      if (isProgressVisible) {
+        progressBar.style.transform = `scaleX(${charsSoFar / totalChars})`;
+        return waitForDOM();
+      }
+    };
+    progressBar.style.transform = `scaleX(0)`;
 
     // Update the original text area when the source changes
     const otherSource = index => index === -1 ? null : sm.sources[index].name;
     const originalName = index => sm.names[index];
-    originalTextArea = null;
+    let finalOriginalTextArea = null;
     if (sm.sources.length > 0) {
-      const updateOriginalSource = () => {
-        const source = sm.sources[fileList.selectedIndex];
-        originalTextArea = createTextArea({
-          sourceIndex: fileList.selectedIndex,
+      const updateOriginalSource = (sourceIndex, progress) => {
+        const source = sm.sources[sourceIndex];
+        return createTextArea({
+          sourceIndex,
           text: source.content,
+          progress,
           mappings: source.data,
           mappingsOffset: 3,
           otherSource,
@@ -619,21 +652,18 @@
             };
           },
         });
+      };
+      fileList.onchange = async () => {
+        originalTextArea = await updateOriginalSource(fileList.selectedIndex);
         isInvalid = true;
       };
-      fileList.onchange = updateOriginalSource;
-      updateOriginalSource();
-    } else {
-      const option = document.createElement('option');
-      option.textContent = `(no original code)`;
-      option.disabled = true;
-      fileList.appendChild(option);
+      finalOriginalTextArea = await updateOriginalSource(0, progress);
     }
-    fileList.selectedIndex = 0;
 
-    generatedTextArea = createTextArea({
+    generatedTextArea = await createTextArea({
       sourceIndex: null,
       text: code,
+      progress,
       mappings: sm.data,
       mappingsOffset: 0,
       otherSource,
@@ -649,7 +679,27 @@
       },
     });
 
+    // Only render the original text area once the generated text area is ready
+    originalTextArea = finalOriginalTextArea;
     isInvalid = true;
+
+    // Populate the file picker once there will be no more await points
+    fileList.innerHTML = '';
+    if (sm.sources.length > 0) {
+      for (let sources = sm.sources, i = 0, n = sources.length; i < n; i++) {
+        const option = document.createElement('option');
+        option.textContent = `${i}: ${sources[i].name}`;
+        fileList.appendChild(option);
+      }
+      fileList.disabled = false;
+    } else {
+      const option = document.createElement('option');
+      option.textContent = `(no original code)`;
+      fileList.appendChild(option);
+    }
+    fileList.selectedIndex = 0;
+
+    if (isProgressVisible) progressBarOverlay.style.display = 'none';
     const endTime = Date.now();
     console.log(`Finished loading in ${endTime - startTime}ms`);
   }
@@ -714,13 +764,15 @@
   let generatedTextArea;
   let hover = null;
 
-  function splitTextIntoLinesAndRuns(text) {
+  async function splitTextIntoLinesAndRuns(text, progress) {
     c.font = monospaceFont;
     const spaceWidth = c.measureText(' ').width;
     const spacesPerTab = 2;
     const parts = text.split(/(\r\n|\r|\n)/g);
     const unicodeWidthCache = new Map();
     const lines = [];
+    const progressChunkSize = 1 << 20;
+    let prevProgressPoint = 0;
     let longestLineInColumns = 0;
     let lineStartOffset = 0;
 
@@ -732,6 +784,7 @@
         continue;
       }
 
+      let nextProgressPoint = progress ? prevProgressPoint + progressChunkSize - lineStartOffset : Infinity;
       let runs = [];
       let i = 0;
       let n = raw.length + 1; // Add 1 for the extra character at the end
@@ -742,6 +795,13 @@
         let startColumn = column;
         let whitespace = 0;
         let isSingleChunk = false;
+
+        // Update the progress bar occasionally
+        if (i > nextProgressPoint) {
+          await progress(lineStartOffset + i - prevProgressPoint);
+          prevProgressPoint = lineStartOffset + i;
+          nextProgressPoint = i + progressChunkSize;
+        }
 
         while (i < n) {
           let c1 = raw.charCodeAt(i);
@@ -858,15 +918,19 @@
       lineStartOffset += raw.length;
     }
 
+    if (prevProgressPoint < text.length && progress) {
+      await progress(text.length - prevProgressPoint);
+    }
+
     return { lines, longestLineInColumns };
   }
 
-  function createTextArea({ sourceIndex, text, mappings, mappingsOffset, otherSource, originalName, bounds }) {
+  async function createTextArea({ sourceIndex, text, progress, mappings, mappingsOffset, otherSource, originalName, bounds }) {
     const shadowWidth = 16;
     const textPaddingX = 5;
     const textPaddingY = 1;
     const scrollbarThickness = 16;
-    let { lines, longestLineInColumns } = splitTextIntoLinesAndRuns(text);
+    let { lines, longestLineInColumns } = await splitTextIntoLinesAndRuns(text, progress);
     let animate = null;
     let lastLineIndex = lines.length - 1;
     let scrollX = 0;
@@ -1189,9 +1253,12 @@
             } else {
               if (originalTextArea.sourceIndex !== hover.mapping.originalSource) {
                 fileList.selectedIndex = hover.mapping.originalSource;
-                fileList.onchange();
+                fileList.onchange().then(() => {
+                  originalTextArea.scrollTo(hover.mapping.originalColumn, hover.mapping.originalLine);
+                });
+              } else {
+                originalTextArea.scrollTo(hover.mapping.originalColumn, hover.mapping.originalLine);
               }
-              originalTextArea.scrollTo(hover.mapping.originalColumn, hover.mapping.originalLine);
             }
           }
           return;
