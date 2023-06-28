@@ -909,11 +909,10 @@
           startIndex, endIndex: i,
           startColumn, endColumn: column,
           isSingleChunk,
-          text: null, // The string for this run will be lazily-generated
         });
       }
 
-      lines.push({ raw, runs, endIndex: i, endColumn: column });
+      lines.push({ raw, runs, runsText: {}, endIndex: i, endColumn: column });
       longestLineInColumns = Math.max(longestLineInColumns, column);
       lineStartOffset += raw.length;
     }
@@ -985,15 +984,13 @@
       return { columnWidth, maxScrollX, maxScrollY, scrollbarX, scrollbarY };
     }
 
-    const emptyArray = [];
+    const emptyLine = { raw: '', runs: [] };
 
     function analyzeLine(row, column, fractionalColumn, tabStopBehavior) {
       let index = column;
       let firstRun = 0;
       let nearbyRun = 0;
-      let line = row < lines.length && lines[row]
-      let raw = line ? line.raw : '';
-      let runs = line ? line.runs : emptyArray;
+      let { raw, runs, runsText } = row < lines.length ? lines[row] : emptyLine;
       let runCount = runs.length;
       let endOfLineIndex = 0;
       let endOfLineColumn = 0;
@@ -1138,6 +1135,7 @@
         column,
         firstRun,
         runs,
+        runsText,
         firstMapping,
         endOfLineIndex,
         endOfLineColumn,
@@ -1337,7 +1335,7 @@
           let dx = x - scrollX + margin + textPaddingX;
           let dy = y - scrollY + textPaddingY;
           dy += (row + 0.7) * rowHeight;
-          const { raw, firstRun, runs, firstMapping, endOfLineColumn, rangeOfMapping, columnToIndex } = analyzeLine(row, firstColumn, firstColumn, 'floor');
+          const { raw, firstRun, runs, runsText, firstMapping, endOfLineColumn, rangeOfMapping, columnToIndex } = analyzeLine(row, firstColumn, firstColumn, 'floor');
           const lastIndex = columnToIndex(lastColumn);
 
           // Don't draw any text if the whole line is offscreen
@@ -1352,13 +1350,14 @@
             let currentColumn = firstColumn;
             for (let i = firstRun; i <= lastRun; i++) {
               const run = runs[i];
-              let { whitespace, text: runText, startColumn, endColumn } = run;
+              let { whitespace, startColumn, endColumn } = run;
+              let text = runsText[i];
 
               // Lazily-generate text for runs to improve performance. When
               // this happens, the run text is the code unit offset of the
               // start of the line containing this run.
-              if (runText === null) {
-                runText = run.text =
+              if (text === void 0) {
+                text = runsText[i] =
                   !whitespace ? raw.slice(run.startIndex, run.endIndex) :
                     whitespace === 0x20 /* space */ ? '·'.repeat(run.endIndex - run.startIndex) :
                       whitespace === 0x0A /* newline */ ? row === lines.length - 1 ? '∅' : '↵' :
@@ -1368,17 +1367,17 @@
               // Limit the run to the visible columns (but only for ASCII runs)
               if (!run.isSingleChunk) {
                 if (startColumn < currentColumn) {
-                  runText = runText.slice(currentColumn - startColumn);
+                  text = text.slice(currentColumn - startColumn);
                   startColumn = currentColumn;
                 }
                 if (endColumn > lastColumn) {
-                  runText = runText.slice(0, lastColumn - startColumn);
+                  text = text.slice(0, lastColumn - startColumn);
                   endColumn = lastColumn;
                 }
               }
 
               // Draw whitespace in a separate batch
-              (whitespace ? whitespaceBatch : textBatch).push(runText, dx + startColumn * columnWidth, dy);
+              (whitespace ? whitespaceBatch : textBatch).push(text, dx + startColumn * columnWidth, dy);
               currentColumn = endColumn;
             }
           }
