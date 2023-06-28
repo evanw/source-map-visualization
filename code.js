@@ -909,7 +909,7 @@
           startIndex, endIndex: i,
           startColumn, endColumn: column,
           isSingleChunk,
-          text: lineStartOffset, // The string for this run will be lazily-generated using this offset
+          text: null, // The string for this run will be lazily-generated
         });
       }
 
@@ -991,7 +991,9 @@
       let index = column;
       let firstRun = 0;
       let nearbyRun = 0;
-      let runs = row < lines.length ? lines[row].runs : emptyArray;
+      let line = row < lines.length && lines[row]
+      let raw = line ? line.raw : '';
+      let runs = line ? line.runs : emptyArray;
       let runCount = runs.length;
       let endOfLineIndex = 0;
       let endOfLineColumn = 0;
@@ -1131,6 +1133,7 @@
       }
 
       return {
+        raw,
         index,
         column,
         firstRun,
@@ -1334,7 +1337,7 @@
           let dx = x - scrollX + margin + textPaddingX;
           let dy = y - scrollY + textPaddingY;
           dy += (row + 0.7) * rowHeight;
-          const { firstRun, runs, firstMapping, endOfLineColumn, rangeOfMapping, columnToIndex } = analyzeLine(row, firstColumn, firstColumn, 'floor');
+          const { raw, firstRun, runs, firstMapping, endOfLineColumn, rangeOfMapping, columnToIndex } = analyzeLine(row, firstColumn, firstColumn, 'floor');
           const lastIndex = columnToIndex(lastColumn);
 
           // Don't draw any text if the whole line is offscreen
@@ -1354,11 +1357,11 @@
               // Lazily-generate text for runs to improve performance. When
               // this happens, the run text is the code unit offset of the
               // start of the line containing this run.
-              if (typeof runText === 'number') {
+              if (runText === null) {
                 runText = run.text =
-                  !whitespace ? text.slice(runText + run.startIndex, runText + run.endIndex) :
+                  !whitespace ? raw.slice(run.startIndex, run.endIndex) :
                     whitespace === 0x20 /* space */ ? '·'.repeat(run.endIndex - run.startIndex) :
-                      whitespace === 0x0A /* newline */ ? runText + run.startIndex === text.length ? '∅' : '↵' :
+                      whitespace === 0x0A /* newline */ ? row === lines.length - 1 ? '∅' : '↵' :
                         '→' /* tab */;
               }
 
