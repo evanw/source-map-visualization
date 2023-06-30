@@ -1097,7 +1097,7 @@
           while (run_startColumn(runBase + 5 * nearbyRun) > column && nearbyRun > 0) nearbyRun--;
           while (run_endColumn(runBase + 5 * nearbyRun) < column && nearbyRun + 1 < runCount) nearbyRun++;
           let run = runBase + 5 * nearbyRun;
-          index = column === run_endColumn(run) ? run_endIndex(run) : run_endIndex(run) + column - run_startColumn(run);
+          index = column === run_endColumn(run) ? run_endIndex(run) : run_startIndex(run) + column - run_startColumn(run);
         }
         return index;
       }
