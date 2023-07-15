@@ -509,7 +509,7 @@
           };
         }
 
-        const data = decodeMappings(mappings, sources.length, names.length);
+        const data = decodeMappings(mappings, sources.length, names ? names.length : 0);
         decodedSections.push({ offset: { line, column }, sources, names, data });
         totalDataLength += data.length;
       }
@@ -540,7 +540,7 @@
 
         mergedData.set(data, dataOffset);
         for (const source of sources) mergedSources.push(source);
-        for (const name of names) mergedNames.push(name);
+        if (names) for (const name of names) mergedNames.push(name);
         dataOffset += data.length;
       }
 
@@ -573,7 +573,7 @@
       };
     }
 
-    const data = decodeMappings(mappings, sources.length, names.length);
+    const data = decodeMappings(mappings, sources.length, names ? names.length : 0);
     generateInverseMappings(sources, data);
     return { sources, names, data };
   }
