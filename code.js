@@ -101,16 +101,31 @@
   }
 
   async function finishLoadingCodeWithEmbeddedSourceMap(code, file) {
-    // Check for both "//" and "/*" comments
-    let match = /\/(\/)[#@] *sourceMappingURL=([^\s]+)/.exec(code);
-    if (!match) match = /\/(\*)[#@] *sourceMappingURL=((?:[^\s*]|\*[^/])+)(?:[^*]|\*[^/])*\*\//.exec(code);
+    let url;
+
+    // Check for both "//" and "/*" comments. This is mostly done manually
+    // instead of doing it all with a regular expression because Firefox's
+    // regular expression engine crashes with an internal error when the
+    // match is too big.
+    for (let regex = /\/([*/])[#@] *sourceMappingURL=/g, match; match = regex.exec(code);) {
+      const start = match.index + match[0].length;
+      const n = code.length;
+      let end = start;
+      while (end < n && code.charCodeAt(end) > 32) {
+        end++;
+      }
+      if (end > start && (match[1] === '/' || code.slice(end).indexOf('*/') > 0)) {
+        url = code.slice(start, end);
+        break;
+      }
+    }
 
     // Check for a non-empty data URL payload
-    if (match && match[2]) {
+    if (url) {
       let map;
       try {
         // Use "new URL" to ensure that the URL has a protocol (e.g. "data:" or "https:")
-        map = await fetch(new URL(match[2])).then(r => r.text());
+        map = await fetch(new URL(url)).then(r => r.text());
       } catch (e) {
         showLoadingError(`Failed to parse the URL in the "/${match[1]}# sourceMappingURL=" comment: ${e && e.message || e}`);
         return;
