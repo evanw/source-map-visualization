@@ -101,13 +101,13 @@
   }
 
   async function finishLoadingCodeWithEmbeddedSourceMap(code, file) {
-    let url;
+    let url, match;
 
     // Check for both "//" and "/*" comments. This is mostly done manually
     // instead of doing it all with a regular expression because Firefox's
     // regular expression engine crashes with an internal error when the
     // match is too big.
-    for (let regex = /\/([*/])[#@] *sourceMappingURL=/g, match; match = regex.exec(code);) {
+    for (let regex = /\/([*/])[#@] *sourceMappingURL=/g; match = regex.exec(code);) {
       const start = match.index + match[0].length;
       const n = code.length;
       let end = start;
